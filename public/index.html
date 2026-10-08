@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>md-live-viewer</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var theme = localStorage.getItem('md-live-viewer:theme') || 'system'
+          if (theme === 'light' || theme === 'dark') {
+            document.documentElement.dataset.theme = theme
+          }
+        } catch (error) {}
+      })()
+    </script>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/katex/katex.min.css" />
+    <style>
+      :root {
+        --bg: #fbfbfa;
+        --panel: #ffffff;
+        --border: rgba(0, 0, 0, 0.12);
+        --muted: #6b7280;
+        --fg: #1f2328;
+        --accent: #2563eb;
+        --accent-soft: rgba(37, 99, 235, 0.12);
+        color-scheme: light;
+      }
+      :root[data-theme='light'] {
+        color-scheme: light;
+      }
+      :root[data-theme='dark'] {
+        --bg: #1b1c1e;
+        --panel: #232427;
+        --border: rgba(255, 255, 255, 0.14);
+        --muted: #9aa0a6;
+        --fg: #e8eaed;
+        --accent: #8ab4f8;
+        --accent-soft: rgba(138, 180, 248, 0.18);
+        color-scheme: dark;
+      }
+      /* "System" (no data-theme) follows the OS setting. */
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+          --bg: #1b1c1e;
+          --panel: #232427;
+          --border: rgba(255, 255, 255, 0.14);
+          --muted: #9aa0a6;
+          --fg: #e8eaed;
+          --accent: #8ab4f8;
+          --accent-soft: rgba(138, 180, 248, 0.18);
+          color-scheme: dark;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial,
+          Helvetica, sans-serif;
+        height: 100dvh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        flex: none;
+      }
+      header .brand {
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      #openBtn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.3rem 0.6rem;
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-size: 0.85rem;
+        max-width: 18rem;
+        overflow: hidden;
+      }
+      #openBtn:hover {
+        background: var(--accent-soft);
+      }
+      kbd {
+        font-family: inherit;
+        font-size: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 0.25rem;
+        padding: 0.05rem 0.3rem;
+        background: var(--bg);
+      }
+      #themeBtn,
+      #copyPathBtn,
+      #copyLinkBtn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      #themeBtn:hover,
+      #copyPathBtn:hover:not(:disabled),
+      #copyLinkBtn:hover:not(:disabled) {
+        background: var(--accent-soft);
+      }
+      #copyPathBtn:disabled,
+      #copyLinkBtn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      #currentPath {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--muted);
+        font-size: 0.85rem;
+        cursor: pointer;
+        padding: 0.2rem 0.4rem;
+        border-radius: 0.3rem;
+      }
+      #currentPath:hover {
+        background: var(--accent-soft);
+      }
+      #status {
+        font-size: 0.75rem;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      #status.live::before {
+        content: '●';
+        color: #16a34a;
+        margin-right: 0.3rem;
+      }
+      #status.offline::before {
+        content: '●';
+        color: #dc2626;
+        margin-right: 0.3rem;
+      }
+      main {
+        flex: 1;
+        overflow: auto;
+        scroll-behavior: smooth;
+      }
+      #content {
+        max-width: 60rem;
+        margin: 0 auto;
+        padding: 2rem 2.5rem 6rem;
+        line-height: 1.6;
+      }
+      #content img {
+        max-width: 100%;
+      }
+      #content table {
+        border-collapse: collapse;
+        width: fit-content;
+        max-width: 100%;
+        overflow: auto;
+        display: block;
+      }
+      #content th,
+      #content td {
+        border: 1px solid var(--border);
+        padding: 0.25rem 0.6rem;
+      }
+      #content pre {
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+        padding: 0.75rem;
+        overflow: auto;
+        background: var(--panel);
+        position: relative;
+      }
+      #content pre .code-copy {
+        position: absolute;
+        top: 0.4rem;
+        right: 0.4rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.9rem;
+        height: 1.9rem;
+        border: 1px solid var(--border);
+        border-radius: 0.35rem;
+        background: var(--bg);
+        color: var(--muted);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.12s;
+      }
+      #content pre:hover .code-copy,
+      #content pre .code-copy:focus-visible {
+        opacity: 1;
+      }
+      #content pre .code-copy:hover {
+        background: var(--accent);
+        color: #fff;
+      }
+      #content pre .code-copy svg {
+        width: 1rem;
+        height: 1rem;
+      }
+      #content code:not(pre code) {
+        background: var(--accent-soft);
+        padding: 0.1rem 0.3rem;
+        border-radius: 0.25rem;
+      }
+      /* Prism token colors (light theme; dark overrides below). */
+      #content .token.comment,
+      #content .token.prolog,
+      #content .token.doctype,
+      #content .token.cdata {
+        color: #6a737d;
+      }
+      #content .token.punctuation {
+        color: #24292e;
+      }
+      #content .token.property,
+      #content .token.tag,
+      #content .token.boolean,
+      #content .token.number,
+      #content .token.constant,
+      #content .token.symbol,
+      #content .token.deleted {
+        color: #005cc5;
+      }
+      #content .token.selector,
+      #content .token.attr-name,
+      #content .token.string,
+      #content .token.char,
+      #content .token.builtin,
+      #content .token.inserted {
+        color: #22863a;
+      }
+      #content .token.operator,
+      #content .token.entity,
+      #content .token.url,
+      #content .language-css .token.string,
+      #content .style .token.string {
+        color: #d73a49;
+      }
+      #content .token.atrule,
+      #content .token.attr-value,
+      #content .token.keyword {
+        color: #d73a49;
+      }
+      #content .token.function,
+      #content .token.class-name {
+        color: #6f42c1;
+      }
+      #content .token.regex,
+      #content .token.important,
+      #content .token.variable {
+        color: #e36209;
+      }
+      :root[data-theme='dark'] #content .token.comment,
+      :root[data-theme='dark'] #content .token.prolog,
+      :root[data-theme='dark'] #content .token.doctype,
+      :root[data-theme='dark'] #content .token.cdata {
+        color: #8b949e;
+      }
+      :root[data-theme='dark'] #content .token.punctuation {
+        color: #c9d1d9;
+      }
+      :root[data-theme='dark'] #content .token.property,
+      :root[data-theme='dark'] #content .token.tag,
+      :root[data-theme='dark'] #content .token.boolean,
+      :root[data-theme='dark'] #content .token.number,
+      :root[data-theme='dark'] #content .token.constant,
+      :root[data-theme='dark'] #content .token.symbol,
+      :root[data-theme='dark'] #content .token.deleted {
+        color: #79c0ff;
+      }
+      :root[data-theme='dark'] #content .token.selector,
+      :root[data-theme='dark'] #content .token.attr-name,
+      :root[data-theme='dark'] #content .token.string,
+      :root[data-theme='dark'] #content .token.char,
+      :root[data-theme='dark'] #content .token.builtin,
+      :root[data-theme='dark'] #content .token.inserted {
+        color: #a5d6ff;
+      }
+      :root[data-theme='dark'] #content .token.operator,
+      :root[data-theme='dark'] #content .token.entity,
+      :root[data-theme='dark'] #content .token.url,
+      :root[data-theme='dark'] #content .language-css .token.string,
+      :root[data-theme='dark'] #content .style .token.string,
+      :root[data-theme='dark'] #content .token.atrule,
+      :root[data-theme='dark'] #content .token.attr-value,
+      :root[data-theme='dark'] #content .token.keyword {
+        color: #ff7b72;
+      }
+      :root[data-theme='dark'] #content .token.function,
+      :root[data-theme='dark'] #content .token.class-name {
+        color: #d2a8ff;
+      }
+      :root[data-theme='dark'] #content .token.regex,
+      :root[data-theme='dark'] #content .token.important,
+      :root[data-theme='dark'] #content .token.variable {
+        color: #ffa657;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) #content .token.comment,
+        :root:not([data-theme]) #content .token.prolog,
+        :root:not([data-theme]) #content .token.doctype,
+        :root:not([data-theme]) #content .token.cdata {
+          color: #8b949e;
+        }
+        :root:not([data-theme]) #content .token.punctuation {
+          color: #c9d1d9;
+        }
+        :root:not([data-theme]) #content .token.property,
+        :root:not([data-theme]) #content .token.tag,
+        :root:not([data-theme]) #content .token.boolean,
+        :root:not([data-theme]) #content .token.number,
+        :root:not([data-theme]) #content .token.constant,
+        :root:not([data-theme]) #content .token.symbol,
+        :root:not([data-theme]) #content .token.deleted {
+          color: #79c0ff;
+        }
+        :root:not([data-theme]) #content .token.selector,
+        :root:not([data-theme]) #content .token.attr-name,
+        :root:not([data-theme]) #content .token.string,
+        :root:not([data-theme]) #content .token.char,
+        :root:not([data-theme]) #content .token.builtin,
+        :root:not([data-theme]) #content .token.inserted {
+          color: #a5d6ff;
+        }
+        :root:not([data-theme]) #content .token.operator,
+        :root:not([data-theme]) #content .token.entity,
+        :root:not([data-theme]) #content .token.url,
+        :root:not([data-theme]) .language-css .token.string,
+        :root:not([data-theme]) .style .token.string,
+        :root:not([data-theme]) #content .token.atrule,
+        :root:not([data-theme]) #content .token.attr-value,
+        :root:not([data-theme]) #content .token.keyword {
+          color: #ff7b72;
+        }
+        :root:not([data-theme]) #content .token.function,
+        :root:not([data-theme]) #content .token.class-name {
+          color: #d2a8ff;
+        }
+        :root:not([data-theme]) #content .token.regex,
+        :root:not([data-theme]) #content .token.important,
+        :root:not([data-theme]) #content .token.variable {
+          color: #ffa657;
+        }
+      }
+      #content blockquote {
+        border-left: 3px solid var(--border);
+        margin-left: 0;
+        padding-left: 1rem;
+        color: var(--muted);
+      }
+      #content .mermaid-diagram {
+        display: flex;
+        justify-content: center;
+        padding: 1rem;
+        overflow: auto;
+      }
+      .empty {
+        color: var(--muted);
+        text-align: center;
+        margin-top: 20vh;
+      }
+      #toast {
+        position: fixed;
+        bottom: 1.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #333;
+        color: #fff;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        font-size: 0.85rem;
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+        z-index: 2000;
+      }
+      #toast.show {
+        opacity: 1;
+      }
+
+      /* Command palette */
+      #palette {
+        border: 1px solid var(--border);
+        border-radius: 0.6rem;
+        padding: 0;
+        width: min(46rem, 92vw);
+        margin-top: 10vh;
+        background: var(--panel);
+        color: inherit;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+      }
+      #palette::backdrop {
+        background: rgba(0, 0, 0, 0.45);
+      }
+      #paletteInput {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        border-bottom: 1px solid var(--border);
+        padding: 0.9rem 1rem;
+        font-size: 1.05rem;
+        background: transparent;
+        color: inherit;
+        outline: none;
+      }
+      .palette-head {
+        display: flex;
+        align-items: stretch;
+        border-bottom: 1px solid var(--border);
+      }
+      .palette-head #paletteInput {
+        border-bottom: none;
+      }
+      #paletteMode {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.35rem;
+        min-width: 5.6rem;
+        border: none;
+        border-left: 1px solid var(--border);
+        padding: 0 0.6rem;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 0.85rem;
+        white-space: nowrap;
+      }
+      #paletteModeIcon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.5rem;
+        height: 1.5rem;
+        color: var(--muted);
+      }
+      #paletteModeIcon svg {
+        display: block;
+        width: 1.2rem;
+        height: 1.2rem;
+      }
+      #paletteModeLabel {
+        display: inline-block;
+        min-width: 2.1rem;
+        text-align: left;
+      }
+      #paletteMode:hover {
+        background: var(--accent-soft);
+      }
+      #paletteList {
+        list-style: none;
+        margin: 0;
+        padding: 0.25rem;
+        max-height: 55vh;
+        overflow: auto;
+      }
+      #paletteList li {
+        padding: 0.45rem 0.65rem;
+        border-radius: 0.4rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      #paletteList li .palette-path {
+        flex: 1 1 auto;
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        line-height: 1.5;
+      }
+      #paletteList li .palette-copy,
+      #paletteList li .palette-remove {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        padding: 0;
+        border-radius: 0.4rem;
+      }
+      #paletteList li .palette-copy svg,
+      #paletteList li .palette-remove svg {
+        width: 1.15rem;
+        height: 1.15rem;
+      }
+      #paletteList li .palette-copy:hover {
+        background: var(--accent);
+        color: #fff;
+      }
+      #paletteList li .palette-remove:hover {
+        background: #dc2626;
+        color: #fff;
+      }
+      #paletteList li .palette-copy:active,
+      #paletteList li .palette-remove:active {
+        transform: scale(0.92);
+      }
+      #paletteList li .palette-path .path-dir {
+        color: var(--muted);
+        font-size: 0.78rem;
+        margin-left: 0.5rem;
+      }
+      #paletteList li .palette-path .path-name {
+        color: var(--fg);
+        font-size: 0.92rem;
+      }
+      #paletteList li.active {
+        background: var(--accent-soft);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      #paletteList li:not(.palette-section):not(.active):hover {
+        background: rgba(127, 127, 127, 0.12);
+      }
+      #paletteList li mark {
+        background: transparent;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      /* Folder tree mode */
+      #paletteList li.tree-dir {
+        font-family: monospace;
+        color: var(--muted);
+        justify-content: flex-start;
+        white-space: pre;
+        cursor: pointer;
+      }
+      #paletteList li.tree-file {
+        font-family: monospace;
+        justify-content: flex-start;
+        white-space: pre;
+      }
+      #paletteList li.tree-file .tree-arrow {
+        color: var(--muted);
+      }
+      #paletteList li.tree-nearby {
+        color: var(--accent);
+      }
+      #paletteEmpty {
+        padding: 1rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      #paletteList li.palette-section {
+        padding: 0.5rem 0.65rem 0.2rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        cursor: default;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="brand">md-live-viewer</span>
+      <button id="openBtn" title="Open a file (Ctrl/Cmd + P)">
+        Open file <kbd>Ctrl</kbd><kbd>P</kbd>
+      </button>
+      <span id="currentPath"></span>
+      <button id="copyPathBtn" title="Copy absolute path" disabled>📋</button>
+      <button id="copyLinkBtn" title="Copy link to this file" disabled>🔗</button>
+      <button id="themeBtn" title="Theme: system / light / dark">
+        <span id="themeIcon">🖥️</span>
+      </button>
+      <span id="status">connecting…</span>
+    </header>
+    <main>
+      <div id="content">
+        <div class="empty">
+          <p>No file open.</p>
+          <p>Press <kbd>Ctrl</kbd> + <kbd>P</kbd> to search markdown files.</p>
+        </div>
+      </div>
+    </main>
+    <div id="toast"></div>
+
+    <dialog id="palette">
+      <div class="palette-head">
+        <input
+          id="paletteInput"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search files — add folder words too, e.g. 'docs config'"
+        />
+        <button id="paletteMode" type="button" title="Toggle flat list / folder tree">
+          <span id="paletteModeIcon"></span>
+          <span id="paletteModeLabel">List</span>
+        </button>
+      </div>
+      <ul id="paletteList"></ul>
+      <div id="paletteEmpty" hidden>No matching files</div>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

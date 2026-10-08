@@ -1,0 +1,1113 @@
+import { micromark } from 'micromark'
+import { gfm, gfmHtml } from 'micromark-extension-gfm'
+import mermaid from 'mermaid'
+import katex from 'katex'
+// Prism mutates a shared global, so import the core first, then languages.
+import Prism from 'prismjs'
+import 'prismjs/components/prism-markup'
+import 'prismjs/components/prism-clike'
+import 'prismjs/components/prism-javascript'
+import 'prismjs/components/prism-typescript'
+import 'prismjs/components/prism-jsx'
+import 'prismjs/components/prism-tsx'
+import 'prismjs/components/prism-json'
+import 'prismjs/components/prism-yaml'
+import 'prismjs/components/prism-bash'
+import 'prismjs/components/prism-python'
+import 'prismjs/components/prism-markdown'
+import 'prismjs/components/prism-sql'
+import 'prismjs/components/prism-go'
+import 'prismjs/components/prism-rust'
+import 'prismjs/components/prism-css'
+
+mermaid.initialize({ startOnLoad: false, theme: 'default' })
+
+let content = document.querySelector<HTMLElement>('#content')!
+let currentPath = document.querySelector<HTMLElement>('#currentPath')!
+let statusNode = document.querySelector<HTMLElement>('#status')!
+let openBtn = document.querySelector<HTMLButtonElement>('#openBtn')!
+let toast = document.querySelector<HTMLElement>('#toast')!
+
+let palette = document.querySelector<HTMLDialogElement>('#palette')!
+let paletteInput = document.querySelector<HTMLInputElement>('#paletteInput')!
+let paletteList = document.querySelector<HTMLUListElement>('#paletteList')!
+let paletteEmpty = document.querySelector<HTMLElement>('#paletteEmpty')!
+let paletteModeBtn = document.querySelector<HTMLButtonElement>('#paletteMode')!
+let paletteModeIcon = document.querySelector<HTMLElement>('#paletteModeIcon')!
+let paletteModeLabel = document.querySelector<HTMLElement>('#paletteModeLabel')!
+
+let themeBtn = document.querySelector<HTMLButtonElement>('#themeBtn')!
+let themeIcon = document.querySelector<HTMLElement>('#themeIcon')!
+let copyPathBtn = document.querySelector<HTMLButtonElement>('#copyPathBtn')!
+let copyLinkBtn = document.querySelector<HTMLButtonElement>('#copyLinkBtn')!
+
+let allFiles: string[] = []
+let paletteResults: string[] = []
+let paletteActiveIndex = 0
+let paletteItems: HTMLLIElement[] = []
+let paletteSource: string[] = []
+let paletteMode: 'list' | 'tree' = 'list'
+const expandedDirs = new Set<string>()
+
+let currentFilePath: string | null = null
+let currentRaw = ''
+let serverRoot = ''
+let renderToken = 0
+let toastTimeout: number | undefined
+let paletteSearchToken = 0
+
+function showToast(message: string) {
+  toast.textContent = message
+  toast.classList.add('show')
+  clearTimeout(toastTimeout)
+  toastTimeout = window.setTimeout(() => toast.classList.remove('show'), 1800)
+}
+
+// ---------------------------------------------------------------------------
+// Markdown rendering (ported from html-markdown-editor for feature parity)
+// ---------------------------------------------------------------------------
+
+function markdownToHtml(markdownText: string) {
+  let { markdownText: source, iconLinkBlocks } = extractIconLinks(markdownText)
+
+  let html = micromark(source, {
+    allowDangerousHtml: true,
+    // avoid treating `~$2 / (~$16)` as strikethrough; `~~this~~` still works
+    extensions: [gfm({ singleTilde: false })],
+    htmlExtensions: [gfmHtml()],
+  })
+
+  for (let { placeholder, html: blockHtml } of iconLinkBlocks) {
+    html = html.replace(placeholder, blockHtml)
+  }
+
+  let container = document.createElement('div')
+  container.innerHTML = html
+  container.querySelectorAll('input[type="checkbox"]').forEach(input => {
+    input.removeAttribute('disabled')
+  })
+  return container.innerHTML.trim()
+}
+
+function extractIconLinks(markdownText: string) {
+  markdownText = markdownText.replace(
+    /\[(\s*<svg[\s\S]*?<\/svg>\s*)\]\((\S+?)(?:\s+(?:"([^"]*)"|'([^']*)'))?\)/gi,
+    (_, svg, url, title1, title2) => {
+      let title = title1 || title2
+      let titleAttr = title ? ` title="${title}"` : ''
+      return `<a href="${url}"${titleAttr}>${svg.trim()}</a>`
+    },
+  )
+
+  let iconLinkBlocks: { placeholder: string; html: string }[] = []
+  markdownText = markdownText.replace(
+    /<a\s[^>]*>[\s\S]*?<svg[\s\S]*?<\/svg>[\s\S]*?<\/a>/gi,
+    (html, offset: number) => {
+      let lineStart = markdownText.lastIndexOf('\n', offset - 1) + 1
+      let lineEnd = markdownText.indexOf('\n', offset)
+      if (lineEnd == -1) lineEnd = markdownText.length
+      let line = markdownText.slice(lineStart, lineEnd)
+      let entireLine = line.replace(html, '').trim().length == 0
+      let placeholder = `%%ICON_LINK_${iconLinkBlocks.length + 1}%%`
+      html = html.replace(/>\s+</g, '><').trim()
+      iconLinkBlocks.push({ placeholder, html })
+      return entireLine ? `\n\n${placeholder}\n\n` : placeholder
+    },
+  )
+  return { markdownText, iconLinkBlocks }
+}
+
+function normalizeTableCells(container: HTMLElement) {
+  let changed = true
+  while (changed) {
+    changed = false
+    container.querySelectorAll('th,td').forEach(cell => {
+      for (;;) {
+        let child = cell.lastElementChild
+        if (!child || !isEmptyBlock(child)) break
+        child.remove()
+        changed = true
+      }
+      if (cell.childNodes.length !== 1) return
+      let child = cell.firstElementChild
+      if (!child) return
+      let tagName = child.tagName.toLowerCase()
+      if (tagName !== 'p' && tagName !== 'div') return
+      if (child.closest('pre,code,.katex,.katex-inline,.katex-block')) return
+      child.outerHTML = child.innerHTML
+      changed = true
+    })
+  }
+}
+
+function isEmptyBlock(node: Node | null): boolean {
+  if (!(node instanceof HTMLElement)) return false
+  if (!node.parentElement) return false
+  let tagName = node.tagName.toLowerCase()
+  if (tagName !== 'p' && tagName !== 'div') return false
+  let html = node.innerHTML.trim()
+  return html.length === 0 || html === '<br>'
+}
+
+function renderLatex(container: HTMLElement) {
+  // Unwrap <pre><code>…$$…</code></pre> written as a code block for display math.
+  let html = container.innerHTML
+  html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (_, inner) => {
+    if (inner.includes('$$')) return inner
+    return `<pre><code>${inner}</code></pre>`
+  })
+  container.innerHTML = html
+
+  // Render both $$block$$ and $inline$ math, per text node, skipping code
+  // contexts — so `$$block$$` written as inline code stays literal.
+  let mathPattern =
+    /\$\$([\s\S]+?)\$\$|(?<![A-Za-z$])\$([^\$\n]+?)\$(?!\$|\d)/g
+  let walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  let textNodes: Text[] = []
+  for (;;) {
+    let node = walker.nextNode()
+    if (!node) break
+    let parent = node.parentElement
+    if (!parent) continue
+    if (parent.closest('pre, code, math, .katex-inline, .katex-block')) continue
+    textNodes.push(node as Text)
+  }
+  for (let textNode of textNodes) {
+    let text = textNode.textContent ?? ''
+    let replaced = text.replace(
+      mathPattern,
+      (full, blockMath: string | undefined, inlineMath: string | undefined) => {
+        try {
+          if (blockMath !== undefined) {
+            let math = blockMath.trim()
+            if (!math) return ''
+            let rendered = katex.renderToString(math, {
+              displayMode: true,
+              throwOnError: false,
+            })
+            return `<div class="katex-block" style="display:flex;justify-content:center;padding:0.5rem;">${rendered}</div>`
+          }
+          if (!inlineMath) return full
+          let rendered = katex.renderToString(inlineMath, {
+            displayMode: false,
+            throwOnError: false,
+          })
+          return `<span class="katex-inline">${rendered}</span>`
+        } catch {
+          return full
+        }
+      },
+    )
+    if (replaced === text) continue
+    let template = document.createElement('span')
+    template.innerHTML = replaced
+    textNode.replaceWith(...Array.from(template.childNodes))
+  }
+}
+
+let mermaidCounter = 0
+async function renderMermaid(container: HTMLElement) {
+  let elements = container.querySelectorAll(
+    'pre.language-mermaid, code.language-mermaid',
+  )
+  for (let code of elements) {
+    let pre =
+      code.tagName === 'PRE'
+        ? (code as HTMLPreElement)
+        : (code.closest('pre') as HTMLPreElement)
+    if (!pre) continue
+    let source = code.textContent || ''
+    if (!source.trim()) continue
+    let id = `mermaid-${++mermaidCounter}`
+    try {
+      let { svg } = await mermaid.render(id, source)
+      let div = document.createElement('div')
+      div.className = 'mermaid-diagram'
+      div.innerHTML = svg
+      pre.replaceWith(div)
+    } catch (error) {
+      console.error('Mermaid render error:', error)
+    }
+  }
+}
+
+/** Render raw markdown into the content pane. */
+async function renderMarkdown(markdownText: string) {
+  let token = ++renderToken
+  let html = markdownToHtml(markdownText)
+  content.innerHTML = html
+  normalizeTableCells(content)
+  renderLatex(content)
+  highlightCodeBlocks(content)
+  addCodeCopyButtons(content)
+  await renderMermaid(content)
+  if (token !== renderToken) return
+  rewriteRelativeUrls()
+}
+
+/** Apply Prism syntax highlighting to code blocks. */
+function highlightCodeBlocks(container: HTMLElement) {
+  for (let code of container.querySelectorAll<HTMLElement>('pre > code[class*="language-"]')) {
+    // Skip anything Mermaid/KaTeX has already replaced or owns.
+    if (code.closest('.mermaid-diagram, .katex, .katex-block')) continue
+    let language = (code.className.match(/language-([\w-]+)/)?.[1] ?? '').toLowerCase()
+    if (!language || language === 'mermaid') continue
+    let grammar = Prism.languages[language]
+    if (!grammar) continue
+    try {
+      code.innerHTML = Prism.highlight(code.textContent ?? '', grammar, language)
+      code.parentElement?.classList.add('code-highlighted')
+    } catch (error) {
+      console.error('Prism highlight error:', error)
+    }
+  }
+}
+
+const CODE_COPY_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>'
+
+/** Add a "copy" button to each code block. */
+function addCodeCopyButtons(container: HTMLElement) {
+  for (let pre of container.querySelectorAll<HTMLPreElement>('pre')) {
+    if (pre.closest('.mermaid-diagram')) continue
+    let code = pre.querySelector('code')
+    if (!code) continue
+    let button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'code-copy'
+    button.innerHTML = CODE_COPY_ICON
+    button.title = 'Copy code'
+    button.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(code!.textContent ?? '')
+        button.innerHTML = CHECK_ICON
+        showToast('Copied code')
+        setTimeout(() => (button.innerHTML = CODE_COPY_ICON), 1200)
+      } catch {
+        showToast('Clipboard blocked')
+      }
+    }
+    pre.appendChild(button)
+  }
+}
+
+/**
+ * Rewrite relative image/link URLs so they load through the file server
+ * instead of resolving against the viewer's own URL. Links to other markdown
+ * files navigate inside the viewer; other files open as raw.
+ */
+function rewriteRelativeUrls() {
+  let baseDir = currentFilePath
+    ? currentFilePath.slice(0, currentFilePath.lastIndexOf('/') + 1)
+    : ''
+
+  for (let image of content.querySelectorAll<HTMLImageElement>('img[src]')) {
+    let value = image.getAttribute('src')
+    if (!value || isAbsoluteUrl(value)) continue
+    let resolved = resolveRelative(baseDir, value)
+    if (resolved) image.setAttribute('src', `/raw/${resolved}`)
+  }
+
+  for (let anchor of content.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    let value = anchor.getAttribute('href')
+    if (!value || value.startsWith('#')) continue
+    if (isAbsoluteUrl(value)) {
+      anchor.setAttribute('target', '_blank')
+      anchor.setAttribute('rel', 'noreferrer')
+      continue
+    }
+    let resolved = resolveRelative(baseDir, value)
+    if (!resolved) continue
+    let withoutAnchor = resolved.split('#')[0]
+    if (isMarkdownPath(withoutAnchor)) {
+      anchor.setAttribute('href', '#')
+      anchor.onclick = event => {
+        event.preventDefault()
+        if (withoutAnchor) loadFile(withoutAnchor)
+      }
+      continue
+    }
+    anchor.setAttribute('href', `/raw/${resolved}`)
+    anchor.setAttribute('target', '_blank')
+    anchor.setAttribute('rel', 'noreferrer')
+  }
+}
+
+function isAbsoluteUrl(value: string) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('//')
+}
+
+function isMarkdownPath(filePath: string) {
+  return /\.(md|markdown|mdx|mdown|mkd)$/i.test(filePath)
+}
+
+/** Resolve `value` relative to `baseDir`, dropping any `#fragment`. */
+function resolveRelative(baseDir: string, value: string): string | null {
+  try {
+    let path = new URL(baseDir + value, 'file:///').pathname
+    return decodeURIComponent(path.replace(/^\/+/, ''))
+  } catch {
+    return null
+  }
+}
+
+function updateEmptyState() {
+  if (currentFilePath) return
+  content.innerHTML = /* html */ `<div class="empty">
+    <p>No file open.</p>
+    <p>Press <kbd>Ctrl</kbd> + <kbd>P</kbd> to search markdown files.</p>
+  </div>`
+}
+
+// ---------------------------------------------------------------------------
+// URL hash — makes the open file bookmarkable / shareable across browsers
+// ---------------------------------------------------------------------------
+
+/**
+ * Encode a path for the URL fragment, keeping `/` literal (it is a legal
+ * fragment character). This keeps links readable — Firefox shows `%2F`
+ * verbatim, Chrome decodes it, so literal `/` is consistent in both.
+ */
+function encodePathForHash(path: string): string {
+  return encodeURIComponent(path).replaceAll('%2F', '/')
+}
+
+function decodeHashPart(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+type HashState = { file: string | null }
+
+/**
+ * Read the file path from the URL: `#file=<path>` or the legacy bare
+ * `#<path>`. The served root is fixed by the CLI, so only the file is encoded.
+ */
+function readStateFromHash(): HashState {
+  let hash = location.hash.replace(/^#/, '')
+  if (!hash) return { file: null }
+  if (!hash.includes('=')) {
+    // Legacy: bare path.
+    return { file: decodeHashPart(hash) }
+  }
+  let file: string | null = null
+  for (let part of hash.split('&')) {
+    let separator = part.indexOf('=')
+    if (separator === -1) continue
+    if (part.slice(0, separator) === 'file') {
+      file = decodeHashPart(part.slice(separator + 1))
+    }
+  }
+  return { file }
+}
+
+function updateUrlHash() {
+  let next = currentFilePath ? `#file=${encodePathForHash(currentFilePath)}` : ''
+  if (location.hash === next) return
+  history.replaceState(null, '', next || location.pathname + location.search)
+}
+
+// ---------------------------------------------------------------------------
+// Loading files
+// ---------------------------------------------------------------------------
+
+async function loadFile(relativePath: string, options: { silent?: boolean } = {}) {
+  try {
+    let response = await fetch(`/api/file?path=${encodeURIComponent(relativePath)}`)
+    if (!response.ok) {
+      let body = await response.json().catch(() => ({}))
+      throw new Error(body.error ?? `HTTP ${response.status}`)
+    }
+    let data = (await response.json()) as { path: string; content: string }
+    currentFilePath = data.path
+    currentRaw = data.content
+    currentPath.textContent = data.path
+    document.title = `${data.path} - md-live-viewer`
+    localStorage.setItem('md-live-viewer:last', data.path)
+    rememberFile(data.path)
+    updateUrlHash()
+    copyPathBtn.disabled = false
+    copyLinkBtn.disabled = false
+    copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? data.path}`
+    if (!options.silent) content.scrollTop = 0
+    await renderMarkdown(data.content)
+  } catch (error) {
+    showToast(`Failed to open ${relativePath}: ${(error as Error).message}`)
+    if (!currentFilePath) updateEmptyState()
+  }
+}
+
+async function refreshCurrentFile() {
+  if (!currentFilePath) return
+  await loadFile(currentFilePath, { silent: true })
+  showToast('Updated')
+}
+
+// ---------------------------------------------------------------------------
+// Recent files (shared by the palette's "Recent" section)
+// ---------------------------------------------------------------------------
+
+const RECENT_FILES_KEY = 'md-live-viewer:recent-files'
+const MAX_RECENT_FILES = 50
+
+function getRecentFiles(): string[] {
+  try {
+    let raw = localStorage.getItem(RECENT_FILES_KEY)
+    let list = raw ? (JSON.parse(raw) as unknown) : []
+    return Array.isArray(list) ? list.filter(x => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function rememberFile(file: string) {
+  let list = getRecentFiles().filter(item => item !== file)
+  list.unshift(file)
+  localStorage.setItem(
+    RECENT_FILES_KEY,
+    JSON.stringify(list.slice(0, MAX_RECENT_FILES)),
+  )
+}
+
+/** Drop a file from the recents list. */
+function forgetFile(file: string) {
+  let list = getRecentFiles().filter(item => item !== file)
+  localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(list))
+}
+
+// ---------------------------------------------------------------------------
+// File palette (Ctrl/Cmd + P)
+// ---------------------------------------------------------------------------
+
+function highlightMatch(file: string, query: string) {
+  let trimmed = query.trim()
+  let tokens = trimmed ? trimmed.split(/\s+/).filter(Boolean) : []
+  let basename = file.slice(file.lastIndexOf('/') + 1)
+  let dir = file.slice(0, file.length - basename.length)
+
+  // Cursor-like: filename first (strong), then the folder path (muted), left
+  // to right. Truncation happens at the end, so the filename stays visible.
+  let row = document.createElement('span')
+  row.className = 'palette-path'
+
+  let nameSpan = document.createElement('span')
+  nameSpan.className = 'path-name'
+  nameSpan.appendChild(highlightText(basename, tokens))
+  row.appendChild(nameSpan)
+
+  if (dir) {
+    let dirSpan = document.createElement('span')
+    dirSpan.className = 'path-dir'
+    dirSpan.appendChild(highlightText(dir, tokens))
+    row.appendChild(dirSpan)
+  }
+
+  return row
+}
+
+/** Wrap each query token's subsequence match in <mark> within `text`. */
+function highlightText(text: string, tokens: string[]) {
+  let fragment = document.createDocumentFragment()
+  if (tokens.length === 0) {
+    fragment.append(text)
+    return fragment
+  }
+
+  let lowerText = text.toLowerCase()
+  let highlighted = new Set<number>()
+  for (let token of tokens) {
+    let lowerToken = token.toLowerCase()
+    let tokenIndex = 0
+    let matched: number[] = []
+    for (let index = 0; index < lowerText.length && tokenIndex < lowerToken.length; index++) {
+      if (lowerText[index] === lowerToken[tokenIndex]) {
+        matched.push(index)
+        tokenIndex++
+      }
+    }
+    // Only commit when the whole token matched (avoid partial noise).
+    if (tokenIndex === lowerToken.length) {
+      for (let index of matched) highlighted.add(index)
+    }
+  }
+
+  let previous = 0
+  for (let index = 0; index <= text.length; index++) {
+    if (!highlighted.has(index)) continue
+    if (index > previous) fragment.append(text.slice(previous, index))
+    let mark = document.createElement('mark')
+    mark.textContent = text[index]
+    fragment.append(mark)
+    previous = index + 1
+  }
+  fragment.append(text.slice(previous))
+  return fragment
+}
+
+function renderPaletteList() {
+  paletteList.textContent = ''
+  paletteItems = []
+  let query = paletteInput.value.trim()
+
+  let addHeader = (text: string) => {
+    let header = document.createElement('li')
+    header.className = 'palette-section'
+    header.textContent = text
+    paletteList.appendChild(header)
+  }
+
+  let addFile = (file: string, isRecent = false) => {
+    let index = paletteResults.length
+    paletteResults.push(file)
+    let item = document.createElement('li')
+    item.dataset.index = String(index)
+    if (index === paletteActiveIndex) item.classList.add('active')
+    item.appendChild(highlightMatch(file, query))
+
+    // Recent rows get a remove button, placed *before* copy so the copy
+    // button stays rightmost and aligns across Recent and All-files rows.
+    if (isRecent) {
+      let removeBtn = document.createElement('button')
+      removeBtn.type = 'button'
+      removeBtn.className = 'palette-remove'
+      // An SVG matches the weight of the other icons (a ✕ glyph is too thin).
+      removeBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
+      removeBtn.title = 'Remove from recent'
+      removeBtn.onclick = event => {
+        event.stopPropagation()
+        forgetFile(file)
+        renderPaletteList()
+      }
+      item.appendChild(removeBtn)
+    }
+
+    // Right-side button: copy the absolute path without opening the file.
+    let copyBtn = document.createElement('button')
+    copyBtn.type = 'button'
+    copyBtn.className = 'palette-copy'
+    copyBtn.innerHTML = COPY_ICON
+    copyBtn.title = 'Copy absolute path (no open)'
+    copyBtn.onclick = async event => {
+      event.stopPropagation()
+      let absolute = absolutePathFor(file)
+      if (!absolute) return
+      try {
+        await navigator.clipboard.writeText(absolute)
+        copyBtn.innerHTML = CHECK_ICON
+        showToast('Copied path')
+        setTimeout(() => (copyBtn.innerHTML = COPY_ICON), 1200)
+      } catch {
+        showToast('Clipboard blocked')
+      }
+    }
+    item.appendChild(copyBtn)
+
+    item.onclick = () => selectPaletteIndex(index)
+    // Hovering moves the active selection too (like an editor quick-open).
+    item.addEventListener('mouseenter', () => setActiveIndex(index))
+    paletteList.appendChild(item)
+    paletteItems.push(item)
+  }
+
+  // Reset results, then rebuild (recent section first when not searching).
+  let recent = getRecentFiles().filter(file => paletteSource.includes(file))
+  let rest = paletteSource.filter(file => !recent.includes(file))
+
+  paletteResults = []
+  if (query) {
+    paletteSource.forEach(file => addFile(file))
+  } else {
+    if (recent.length > 0) {
+      addHeader('Recent')
+      recent.forEach(file => addFile(file, true))
+      if (rest.length > 0) addHeader('All files')
+    }
+    // Cap the browse list; typing searches the full set.
+    rest.slice(0, 300).forEach(file => addFile(file))
+  }
+
+  paletteEmpty.hidden = paletteResults.length > 0
+  setActiveIndex(paletteActiveIndex)
+}
+
+/**
+ * Move the active (keyboard-targeted) row.
+ * `scroll: false` updates the highlight without moving the list — used when
+ * the row is already visible (hover, or syncing from a user scroll).
+ */
+let suppressScrollSync = false
+function setActiveIndex(index: number, options: { scroll?: boolean } = {}) {
+  let { scroll = true } = options
+  let count = paletteResults.length
+  if (count === 0) {
+    paletteActiveIndex = 0
+    paletteItems.forEach(item => item.classList.remove('active'))
+    return
+  }
+  paletteActiveIndex = ((index % count) + count) % count
+  paletteItems.forEach((item, i) => {
+    item.classList.toggle('active', i === paletteActiveIndex)
+  })
+  if (!scroll) return
+  let active = paletteItems[paletteActiveIndex]
+  if (!active) return
+  // Ignore the scroll event our own scrollIntoView triggers.
+  suppressScrollSync = true
+  active.scrollIntoView({ block: 'nearest' })
+  setTimeout(() => {
+    suppressScrollSync = false
+  }, 120)
+}
+
+/**
+ * When the user scrolls the palette, move the active row to the first visible
+ * one, so ↑/↓ continue from what's on screen instead of jumping to the top.
+ */
+function syncActiveToScroll() {
+  if (suppressScrollSync || paletteItems.length === 0) return
+  let listTop = paletteList.getBoundingClientRect().top
+  let firstVisible = paletteItems.findIndex(item => {
+    return item.getBoundingClientRect().bottom > listTop + 1
+  })
+  if (firstVisible === -1) firstVisible = paletteItems.length - 1
+  if (firstVisible !== paletteActiveIndex) {
+    setActiveIndex(firstVisible, { scroll: false })
+  }
+}
+
+paletteList.addEventListener('scroll', () => {
+  requestAnimationFrame(syncActiveToScroll)
+})
+
+async function runPaletteSearch() {
+  let query = paletteInput.value
+  let token = ++paletteSearchToken
+  try {
+    let response = await fetch(
+      `/api/search?q=${encodeURIComponent(query)}&limit=50`,
+    )
+    let data = (await response.json()) as { files: string[] }
+    if (token !== paletteSearchToken) return
+    paletteSource = data.files
+    paletteActiveIndex = 0
+    renderPaletteList()
+  } catch {
+    // ignore transient errors
+  }
+}
+
+async function openPalette() {
+  if (allFiles.length === 0) {
+    try {
+      let response = await fetch('/api/files')
+      let data = (await response.json()) as { files: string[] }
+      allFiles = data.files
+    } catch {
+      showToast('Could not load file list')
+    }
+  }
+  paletteInput.value = ''
+  palette.showModal()
+  paletteInput.focus()
+  // Empty query: use the full file list so recents/tree are complete.
+  paletteSource = allFiles.length > 0 ? allFiles : paletteSource
+  paletteActiveIndex = 0
+  if (paletteMode === 'tree') {
+    if (currentFilePath) expandPathTo(currentFilePath)
+    renderTree()
+    paletteEmpty.hidden = paletteResults.length > 0
+    setActiveIndex(paletteActiveIndex)
+    return
+  }
+  renderPaletteList()
+}
+
+function selectPaletteIndex(index: number) {
+  let file = paletteResults[index]
+  if (!file) return
+  palette.close()
+  loadFile(file)
+}
+
+// ---------------------------------------------------------------------------
+// Palette view mode: flat searchable list (default) or folder tree
+// ---------------------------------------------------------------------------
+
+function getSavedPaletteMode(): 'list' | 'tree' {
+  return localStorage.getItem('md-live-viewer:palette-mode') === 'tree'
+    ? 'tree'
+    : 'list'
+}
+
+const LIST_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>'
+const TREE_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h3.5"/><path d="M4.5 3.5v9"/><path d="M6.5 6.5h7"/><path d="M6.5 9.5h7"/><path d="M6.5 12.5h7"/></svg>'
+const COPY_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>'
+const CHECK_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>'
+
+function applyPaletteModeLabel() {
+  let isList = paletteMode === 'list'
+  // SVG icons avoid the font-metric drift of glyphs like ☰ vs 🌲.
+  paletteModeIcon.innerHTML = isList ? LIST_ICON : TREE_ICON
+  paletteModeLabel.textContent = isList ? 'List' : 'Tree'
+}
+
+function setPaletteMode(mode: 'list' | 'tree') {
+  paletteMode = mode
+  localStorage.setItem('md-live-viewer:palette-mode', mode)
+  applyPaletteModeLabel()
+  // Tree mode browses the full set; list mode searches.
+  paletteSource = mode === 'tree' ? allFiles : paletteSource
+  paletteActiveIndex = 0
+  renderPalette()
+}
+
+/** Build the tree of folders/files from the flat relative-path list. */
+function buildFileTree(files: string[]) {
+  type Node = {
+    name: string
+    path: string
+    children: Map<string, Node>
+  }
+  let root: Node = { name: '', path: '', children: new Map() }
+  for (let file of files) {
+    let parts = file.split('/')
+    let current = root
+    let prefix = ''
+    for (let index = 0; index < parts.length; index++) {
+      let name = parts[index]
+      prefix = prefix ? `${prefix}/${name}` : name
+      let isLeaf = index === parts.length - 1
+      let existing = current.children.get(name)
+      if (!existing) {
+        existing = { name, path: prefix, children: new Map() }
+        current.children.set(name, existing)
+      }
+      current = existing
+      if (isLeaf) existing.children.clear()
+    }
+  }
+  return root
+}
+
+function renderTree() {
+  let root = buildFileTree(allFiles)
+
+  let addNode = (
+    node: { name: string; path: string; children: Map<string, any> },
+    depth: number,
+  ) => {
+    let entries = [...node.children.values()].sort((a, b) => {
+      let aDir = a.children.size > 0
+      let bDir = b.children.size > 0
+      // Folders first, then names.
+      if (aDir !== bDir) return aDir ? -1 : 1
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+    })
+    for (let child of entries) {
+      let isDir = child.children.size > 0
+      let expanded = expandedDirs.has(child.path)
+      let item = document.createElement('li')
+      let indent = '  '.repeat(depth)
+
+      if (isDir) {
+        item.className = 'tree-dir'
+        item.textContent = `${indent}${expanded ? '▾' : '▸'} ${child.name}/`
+        item.title = child.path
+        item.onclick = () => {
+          if (expanded) expandedDirs.delete(child.path)
+          else expandedDirs.add(child.path)
+          renderPalette()
+        }
+        paletteList.appendChild(item)
+        if (expanded) addNode(child, depth + 1)
+        continue
+      }
+
+      let index = paletteResults.length
+      paletteResults.push(child.path)
+      item.className = 'tree-file'
+      if (child.path === currentFilePath) item.classList.add('tree-nearby')
+      if (index === paletteActiveIndex) item.classList.add('active')
+      let isNearby = currentFilePath
+        ? child.path.slice(0, child.path.lastIndexOf('/') + 1) ===
+          currentFilePath.slice(0, currentFilePath.lastIndexOf('/') + 1)
+        : false
+      if (isNearby) item.classList.add('tree-nearby')
+      let arrow = document.createElement('span')
+      arrow.className = 'tree-arrow'
+      arrow.textContent = `${indent}  `
+      item.appendChild(arrow)
+      item.appendChild(document.createTextNode(child.name))
+      item.dataset.index = String(index)
+      item.onclick = () => selectPaletteIndex(index)
+      item.addEventListener('mouseenter', () => setActiveIndex(index))
+      paletteList.appendChild(item)
+      paletteItems.push(item)
+    }
+  }
+
+  addNode(root, 0)
+}
+
+/** Dispatch to the flat list or the tree renderer. */
+function renderPalette() {
+  let isTree = paletteMode === 'tree' && paletteInput.value.trim() === ''
+  if (isTree) {
+    paletteList.textContent = ''
+    paletteItems = []
+    paletteResults = []
+    renderTree()
+    paletteEmpty.hidden = paletteResults.length > 0
+    setActiveIndex(paletteActiveIndex)
+    return
+  }
+  renderPaletteList()
+}
+
+/** Expand the folder chain leading to `file` so it is visible in the tree. */
+function expandPathTo(file: string) {
+  let parts = file.split('/')
+  parts.pop()
+  let prefix = ''
+  for (let part of parts) {
+    prefix = prefix ? `${prefix}/${part}` : part
+    expandedDirs.add(prefix)
+  }
+}
+
+openBtn.onclick = openPalette
+
+/** Close a modal <dialog> when its backdrop is clicked (a click on the
+ *  dialog element itself, outside its content box). */
+function closeOnBackdropClick(dialog: HTMLDialogElement) {
+  dialog.addEventListener('click', event => {
+    if (event.target === dialog) dialog.close()
+  })
+}
+closeOnBackdropClick(palette)
+
+function runPaletteView() {
+  if (paletteMode === 'tree' && paletteInput.value.trim() === '') {
+    renderPalette()
+    return
+  }
+  runPaletteSearch()
+}
+
+paletteInput.oninput = () => runPaletteView()
+paletteInput.onkeydown = event => {
+  switch (event.key) {
+    case 'ArrowDown':
+      event.preventDefault()
+      setActiveIndex(paletteActiveIndex + 1)
+      break
+    case 'ArrowUp':
+      event.preventDefault()
+      setActiveIndex(paletteActiveIndex - 1)
+      break
+    case 'Enter':
+      event.preventDefault()
+      selectPaletteIndex(paletteActiveIndex)
+      break
+    case 'Escape':
+      palette.close()
+      break
+  }
+}
+
+paletteModeBtn.onclick = () => {
+  setPaletteMode(paletteMode === 'list' ? 'tree' : 'list')
+  if (paletteMode === 'tree') {
+    // Open the tree where the current file lives.
+    if (currentFilePath) expandPathTo(currentFilePath)
+    paletteInput.value = ''
+  }
+  renderPalette()
+}
+
+document.addEventListener('keydown', event => {
+  let isOpenShortcut =
+    (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'p'
+  if (isOpenShortcut) {
+    event.preventDefault()
+    openPalette()
+    return
+  }
+  if (palette.open) return
+  if (event.key === 'r' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault()
+    refreshCurrentFile()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Live updates over Server-Sent Events
+// ---------------------------------------------------------------------------
+
+function connectEvents() {
+  let source = new EventSource('/api/events')
+  source.addEventListener('ready', event => {
+    statusNode.textContent = 'live'
+    statusNode.className = 'live'
+    let data = JSON.parse((event as MessageEvent).data) as { mode: string }
+    if (data.mode === 'poll') statusNode.textContent = 'live (polling)'
+  })
+  source.addEventListener('change', event => {
+    let data = JSON.parse((event as MessageEvent).data) as {
+      path: string | null
+      type: string
+    }
+    if (data.type === 'reload') {
+      // The served root changed; refresh the file list and clear the view.
+      fetchFiles().then(files => {
+        allFiles = files
+      })
+      return
+    }
+    if (!data.path) {
+      refreshCurrentFile()
+      return
+    }
+    if (data.path === currentFilePath) refreshCurrentFile()
+  })
+  source.onerror = () => {
+    statusNode.textContent = 'reconnecting…'
+    statusNode.className = 'offline'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Copy the absolute path of the open file
+// ---------------------------------------------------------------------------
+
+function currentAbsolutePath(): string | null {
+  if (!currentFilePath || !serverRoot) return null
+  return absolutePathFor(currentFilePath)
+}
+
+/** Absolute path of any file (relative to the served root). */
+function absolutePathFor(relativePath: string): string | null {
+  if (!serverRoot) return null
+  let separator = serverRoot.endsWith('/') ? '' : '/'
+  return serverRoot + separator + relativePath
+}
+
+copyPathBtn.onclick = async () => {
+  let path = currentAbsolutePath()
+  if (!path) return
+  try {
+    await navigator.clipboard.writeText(path)
+    copyPathBtn.textContent = '✓'
+    showToast('Copied absolute path')
+    setTimeout(() => (copyPathBtn.textContent = '📋'), 1500)
+  } catch {
+    showToast('Clipboard blocked — path is in the title')
+  }
+}
+
+// Clicking the header path opens the file picker (same as the Open button).
+currentPath.title = 'Click to open the file picker (Ctrl/Cmd + P)'
+currentPath.addEventListener('click', () => {
+  openPalette()
+})
+
+copyLinkBtn.onclick = async () => {
+  if (!currentFilePath) return
+  let url = `${location.origin}${location.pathname}#file=${encodePathForHash(currentFilePath)}`
+  try {
+    await navigator.clipboard.writeText(url)
+    copyLinkBtn.textContent = '✓'
+    showToast('Copied link to this file')
+    setTimeout(() => (copyLinkBtn.textContent = '🔗'), 1500)
+  } catch {
+    showToast('Clipboard blocked — copy the address bar instead')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Theme toggle (system / light / dark)
+// ---------------------------------------------------------------------------
+
+type Theme = 'system' | 'light' | 'dark'
+const THEME_ORDER: Theme[] = ['system', 'light', 'dark']
+const THEME_ICON: Record<Theme, string> = {
+  system: '🖥️',
+  light: '☀️',
+  dark: '🌙',
+}
+
+function getSavedTheme(): Theme {
+  let value = localStorage.getItem('md-live-viewer:theme')
+  return value === 'light' || value === 'dark' ? value : 'system'
+}
+
+function applyTheme(theme: Theme) {
+  let root = document.documentElement
+  if (theme === 'system') {
+    delete root.dataset.theme
+  } else {
+    root.dataset.theme = theme
+  }
+  themeIcon.textContent = THEME_ICON[theme]
+  themeBtn.title = `Theme: ${theme} (click to change)`
+}
+
+themeBtn.onclick = () => {
+  let next = THEME_ORDER[(THEME_ORDER.indexOf(getSavedTheme()) + 1) % THEME_ORDER.length]
+  localStorage.setItem('md-live-viewer:theme', next)
+  applyTheme(next)
+}
+
+applyTheme(getSavedTheme())
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+async function fetchFiles(): Promise<string[]> {
+  let response = await fetch('/api/files')
+  let data = (await response.json()) as { root: string; files: string[] }
+  serverRoot = data.root
+  return data.files
+}
+
+async function boot() {
+  paletteMode = getSavedPaletteMode()
+  applyPaletteModeLabel()
+  try {
+    allFiles = await fetchFiles()
+  } catch {
+    // palette will retry
+  }
+
+  let requested =
+    readStateFromHash().file ?? new URLSearchParams(location.search).get('file')
+  let last = localStorage.getItem('md-live-viewer:last')
+  let initial = requested ?? (last && allFiles.includes(last) ? last : null)
+  if (!initial && allFiles.length > 0) {
+    initial = allFiles.find(file => /readme\.md$/i.test(file)) ?? null
+  }
+
+  if (initial) {
+    await loadFile(initial)
+  } else {
+    updateEmptyState()
+  }
+
+  // Follow hash changes (back/forward, or a pasted link in the same tab).
+  window.addEventListener('hashchange', () => {
+    let path = readStateFromHash().file
+    if (path && path !== currentFilePath) loadFile(path)
+  })
+
+  connectEvents()
+}
+
+boot()
