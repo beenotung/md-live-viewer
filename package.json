@@ -1,0 +1,66 @@
+{
+  "name": "md-live-viewer",
+  "version": "0.1.0",
+  "description": "Live-updating local markdown viewer. Run `npx md-live-viewer` in any folder to preview markdown files and see edits (e.g. from an AI agent) appear instantly -- no manual refresh.",
+  "type": "module",
+  "bin": {
+    "md-view": "bin/md-view.js",
+    "md-live-viewer": "bin/md-view.js"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && node bin/md-view.js",
+    "dev": "node scripts/build.mjs --watch",
+    "test": "tsc --noEmit && node --test test/*.test.ts",
+    "prepare": "node scripts/build.mjs",
+    "prepublishOnly": "node scripts/build.mjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "public",
+    "src",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "markdown",
+    "preview",
+    "viewer",
+    "live-reload",
+    "hot-reload",
+    "file-watcher",
+    "ai-agent",
+    "llm",
+    "cursor"
+  ],
+  "author": {
+    "name": "Beeno Tung",
+    "email": "aabbcc1241@yahoo.com.hk",
+    "url": "https://beeno-tung.surge.sh"
+  },
+  "license": "BSD-2-Clause",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "esbuild": "^0.28.1",
+    "katex": "^0.17.0",
+    "mermaid": "^11.16.0",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
+    "typescript": "^6.0.3",
+    "prismjs": "^1.30.0"
+  },
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beenotung/md-live-viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/beenotung/md-live-viewer/issues"
+  },
+  "homepage": "https://github.com/beenotung/md-live-viewer#readme"
+}
