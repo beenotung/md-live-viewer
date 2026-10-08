@@ -1,0 +1,8 @@
+node_modules
+dist
+public/app.js
+public/app.js.map
+public/katex
+*.tsbuildinfo
+*.tgz
+.DS_Store
