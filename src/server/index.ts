@@ -243,6 +243,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
       })
+      response.write(`retry: 3000\n\n`)
       response.write(`event: ready\ndata: ${JSON.stringify({ mode: watcher.mode })}\n\n`)
 
       clients.add(response)

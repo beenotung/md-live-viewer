@@ -240,6 +240,7 @@ async function renderMarkdown(markdownText: string) {
   renderLatex(content)
   highlightCodeBlocks(content)
   addCodeCopyButtons(content)
+  addInlineCodeCopy(content)
   await renderMermaid(content)
   if (token !== renderToken) return
   rewriteRelativeUrls()
@@ -288,6 +289,32 @@ function addCodeCopyButtons(container: HTMLElement) {
       }
     }
     pre.appendChild(button)
+  }
+}
+
+/**
+ * Make plain inline `code` click-to-copy. Skipped inside links (so the link
+ * still works) and inside fenced blocks / KaTeX / Mermaid.
+ */
+function addInlineCodeCopy(container: HTMLElement) {
+  for (let code of container.querySelectorAll<HTMLElement>('code')) {
+    if (code.closest('pre, a, .katex, .katex-inline, .katex-block, .mermaid-diagram')) {
+      continue
+    }
+    code.classList.add('code-inline-copy')
+    code.title = 'Click to copy'
+    code.addEventListener('click', async () => {
+      // Keep normal text selection (a drag) working.
+      if (String(window.getSelection() ?? '').trim().length > 0) return
+      try {
+        await navigator.clipboard.writeText(code.textContent ?? '')
+        showToast('Copied')
+        code.classList.add('copied')
+        setTimeout(() => code.classList.remove('copied'), 700)
+      } catch {
+        showToast('Clipboard blocked')
+      }
+    })
   }
 }
 
@@ -484,7 +511,7 @@ function forgetFile(file: string) {
 
 function highlightMatch(file: string, query: string) {
   let trimmed = query.trim()
-  let tokens = trimmed ? trimmed.split(/\s+/).filter(Boolean) : []
+  let tokens = trimmed ? trimmed.split(/[\s/]+/).filter(Boolean) : []
   let basename = file.slice(file.lastIndexOf('/') + 1)
   let dir = file.slice(0, file.length - basename.length)
 
@@ -508,7 +535,14 @@ function highlightMatch(file: string, query: string) {
   return row
 }
 
-/** Wrap each query token's subsequence match in <mark> within `text`. */
+/**
+ * Wrap each query token's match in <mark> within `text`.
+ *
+ * Matching is done per path **segment** (split on `/`) — like the search
+ * itself — so a token never scatters letters across unrelated folders.
+ * A segment is preferred when the token appears contiguously; otherwise a
+ * subsequence match (for typos) is used, and only when the whole token fits.
+ */
 function highlightText(text: string, tokens: string[]) {
   let fragment = document.createDocumentFragment()
   if (tokens.length === 0) {
@@ -516,21 +550,52 @@ function highlightText(text: string, tokens: string[]) {
     return fragment
   }
 
-  let lowerText = text.toLowerCase()
+  // Split into segments, remembering each segment's offset in `text`.
+  let segments: { start: number; lower: string; length: number }[] = []
+  let start = 0
+  for (let index = 0; index <= text.length; index++) {
+    if (index === text.length || text[index] === '/') {
+      let value = text.slice(start, index)
+      segments.push({ start, lower: value.toLowerCase(), length: value.length })
+      start = index + 1
+    }
+  }
+
   let highlighted = new Set<number>()
   for (let token of tokens) {
     let lowerToken = token.toLowerCase()
-    let tokenIndex = 0
-    let matched: number[] = []
-    for (let index = 0; index < lowerText.length && tokenIndex < lowerToken.length; index++) {
-      if (lowerText[index] === lowerToken[tokenIndex]) {
-        matched.push(index)
-        tokenIndex++
+    let best: { positions: number[]; segmentStart: number; score: number } | null = null
+
+    for (let segment of segments) {
+      let positions: number[] = []
+      let score = 0
+      let substringAt = segment.lower.indexOf(lowerToken)
+      if (substringAt !== -1) {
+        // Contiguous match — strongly preferred; shorter segments rank higher.
+        for (let offset = 0; offset < lowerToken.length; offset++) {
+          positions.push(substringAt + offset)
+        }
+        score = 10000 - segment.length
+      } else {
+        // Subsequence match within this one segment (typo tolerance).
+        let tokenIndex = 0
+        for (let index = 0; index < segment.length && tokenIndex < lowerToken.length; index++) {
+          if (segment.lower[index] === lowerToken[tokenIndex]) {
+            positions.push(index)
+            tokenIndex++
+          }
+        }
+        if (tokenIndex !== lowerToken.length) continue
+        score = 1000 - segment.length
+      }
+      if (!best || score > best.score) {
+        best = { positions, segmentStart: segment.start, score }
       }
     }
-    // Only commit when the whole token matched (avoid partial noise).
-    if (tokenIndex === lowerToken.length) {
-      for (let index of matched) highlighted.add(index)
+
+    if (!best) continue
+    for (let position of best.positions) {
+      highlighted.add(best.segmentStart + position)
     }
   }
 
@@ -952,35 +1017,71 @@ document.addEventListener('keydown', event => {
 // ---------------------------------------------------------------------------
 
 function connectEvents() {
-  let source = new EventSource('/api/events')
-  source.addEventListener('ready', event => {
-    statusNode.textContent = 'live'
-    statusNode.className = 'live'
-    let data = JSON.parse((event as MessageEvent).data) as { mode: string }
-    if (data.mode === 'poll') statusNode.textContent = 'live (polling)'
-  })
-  source.addEventListener('change', event => {
-    let data = JSON.parse((event as MessageEvent).data) as {
-      path: string | null
-      type: string
+  let source: EventSource | null = null
+  let reconnectDelay = 1000
+  let reconnectTimer: number | undefined
+
+  function open() {
+    clearTimeout(reconnectTimer)
+    source = new EventSource('/api/events')
+
+    source.addEventListener('ready', event => {
+      statusNode.textContent = 'live'
+      statusNode.className = 'live'
+      reconnectDelay = 1000
+      let data = JSON.parse((event as MessageEvent).data) as { mode: string }
+      if (data.mode === 'poll') statusNode.textContent = 'live (polling)'
+    })
+
+    source.addEventListener('change', event => {
+      let data = JSON.parse((event as MessageEvent).data) as {
+        path: string | null
+        type: string
+      }
+      if (data.type === 'reload') {
+        // The served root changed; refresh the file list and clear the view.
+        fetchFiles().then(files => {
+          allFiles = files
+        })
+        return
+      }
+      if (!data.path) {
+        refreshCurrentFile()
+        return
+      }
+      if (data.path === currentFilePath) refreshCurrentFile()
+    })
+
+    source.onerror = () => {
+      statusNode.textContent = 'reconnecting…'
+      statusNode.className = 'offline'
+      // The browser retries on its own for most failures, but a non-SSE
+      // response (e.g. a 502 during a restart) permanently CLOSES the stream.
+      // Recreate it ourselves in that case, with backoff.
+      if (!source || source.readyState === EventSource.CLOSED) {
+        source?.close()
+        source = null
+        clearTimeout(reconnectTimer)
+        reconnectTimer = window.setTimeout(open, reconnectDelay)
+        reconnectDelay = Math.min(reconnectDelay * 2, 15000)
+      }
     }
-    if (data.type === 'reload') {
-      // The served root changed; refresh the file list and clear the view.
-      fetchFiles().then(files => {
-        allFiles = files
-      })
-      return
-    }
-    if (!data.path) {
-      refreshCurrentFile()
-      return
-    }
-    if (data.path === currentFilePath) refreshCurrentFile()
-  })
-  source.onerror = () => {
-    statusNode.textContent = 'reconnecting…'
-    statusNode.className = 'offline'
   }
+
+  function ensureConnected() {
+    if (!source || source.readyState === EventSource.CLOSED) {
+      reconnectDelay = 1000
+      open()
+    }
+  }
+
+  open()
+  // Recover promptly when the tab is refocused or the network returns.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) ensureConnected()
+  })
+  window.addEventListener('online', ensureConnected)
+  window.addEventListener('focus', ensureConnected)
 }
 
 // ---------------------------------------------------------------------------

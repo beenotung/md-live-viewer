@@ -230,6 +230,18 @@
         padding: 0.1rem 0.3rem;
         border-radius: 0.25rem;
       }
+      #content code.code-inline-copy {
+        cursor: pointer;
+      }
+      #content code.code-inline-copy:hover {
+        /* Subtle: keep the soft fill, just add a ring + accent text. */
+        box-shadow: 0 0 0 1px var(--accent);
+        color: var(--accent);
+      }
+      #content code.code-inline-copy.copied {
+        box-shadow: 0 0 0 1px #16a34a;
+        color: #16a34a;
+      }
       /* Prism token colors (light theme; dark overrides below). */
       #content .token.comment,
       #content .token.prolog,

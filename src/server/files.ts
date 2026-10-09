@@ -177,9 +177,10 @@ export function searchFiles(files: string[], query: string, limit = 50): string[
   let trimmed = query.trim()
   if (!trimmed) return files.slice(0, limit)
 
-  // Space-separated tokens so a query can combine a folder name and a file
-  // name, e.g. `docs config` or `guides setup`. Each token must match.
-  let tokens = trimmed.split(/\s+/).filter(Boolean)
+  // Tokens are separated by whitespace or `/`, so a query can combine folder
+  // and file words — either `docs config` or a pasted partial path like
+  // `docs/config`. Each token must match, in any order.
+  let tokens = trimmed.split(/[\s/]+/).filter(Boolean)
   let scored: { file: string; score: number }[] = []
 
   for (let file of files) {

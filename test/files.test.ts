@@ -103,6 +103,21 @@ test('searchFiles disambiguates files with the same basename by folder', () => {
   assert.deepEqual(searchFiles(files, 'notes a'), ['a/notes.md'])
 })
 
+test('searchFiles matches a pasted partial path with slashes', () => {
+  let files = [
+    'sessions/proj/03-vitals/outreach/polyu-nursing-kor/cover-email-proposal.md',
+    'sessions/proj/03-vitals/other.md',
+  ]
+  // A pasted path fragment must match (the slash is not a literal char to find).
+  assert.deepEqual(searchFiles(files, '03-vitals/outreach/cover-email'), [
+    'sessions/proj/03-vitals/outreach/polyu-nursing-kor/cover-email-proposal.md',
+  ])
+  // Partial path that isn't contiguous in the real path still matches token-wise.
+  assert.deepEqual(searchFiles(files, 'vitals cover-email'), [
+    'sessions/proj/03-vitals/outreach/polyu-nursing-kor/cover-email-proposal.md',
+  ])
+})
+
 test('searchFiles returns all files for an empty query', () => {
   let files = ['a.md', 'b.md', 'c.md']
   assert.deepEqual(searchFiles(files, ''), files)
