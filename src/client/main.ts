@@ -58,6 +58,35 @@ let renderToken = 0
 let toastTimeout: number | undefined
 let paletteSearchToken = 0
 
+// "Recently changed" tracking (block-level diff with decay).
+// A block stays highlighted until it is older than RECENT_TTL_MS (time) OR
+// more than MAX_RECENT_UPDATES live updates have happened since (whichever
+// comes first) — the update cap bounds clutter during edit bursts.
+let lastUnitKeys: string[] = []
+const recentChanges = new Map<string, { at: number; gen: number }>()
+const RECENT_TTL_MS = 20000
+const MAX_RECENT_UPDATES = 5
+let updateGeneration = 0
+let recentTimer: number | undefined
+// Logical clock that pauses while the tab is hidden, so changes never fade
+// before the user actually sees them (and relative order is preserved).
+let hiddenSince: number | null = null
+let pausedMs = 0
+function logicalNow(): number {
+  return (hiddenSince ?? Date.now()) - pausedMs
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    hiddenSince = Date.now()
+  } else if (hiddenSince !== null) {
+    pausedMs += Date.now() - hiddenSince
+    hiddenSince = null
+    let now = logicalNow()
+    pruneRecent(now)
+    applyRecentStyles(now)
+  }
+})
+
 function showToast(message: string) {
   toast.textContent = message
   toast.classList.add('show')
@@ -233,8 +262,110 @@ async function renderMermaid(container: HTMLElement) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// "Recently changed" highlighting (block-level diff + time decay)
+// ---------------------------------------------------------------------------
+
+/** Units are top-level blocks; a list's items and a table's rows are units too. */
+function changeUnits(): { el: HTMLElement; key: string }[] {
+  let units: { el: HTMLElement; key: string }[] = []
+  let add = (el: HTMLElement) => units.push({ el, key: blockKey(el) })
+  for (let el of Array.from(content.children) as HTMLElement[]) {
+    let tag = el.tagName.toLowerCase()
+    if (tag === 'ul' || tag === 'ol') {
+      for (let item of Array.from(el.children) as HTMLElement[]) add(item)
+    } else if (tag === 'table') {
+      for (let row of Array.from(el.querySelectorAll('tr')) as HTMLElement[]) add(row)
+    } else {
+      add(el)
+    }
+  }
+  return units
+}
+
+function blockKey(el: HTMLElement): string {
+  let text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  return `${el.tagName.toLowerCase()}\u0000${text}`
+}
+
+/** A change is still "recent" if it's young enough in both time and updates. */
+function isRecent(entry: { at: number; gen: number }, now: number): boolean {
+  return (
+    now - entry.at <= RECENT_TTL_MS &&
+    updateGeneration - entry.gen <= MAX_RECENT_UPDATES
+  )
+}
+
+function pruneRecent(now: number) {
+  for (let [key, entry] of recentChanges) {
+    if (!isRecent(entry, now)) recentChanges.delete(key)
+  }
+}
+
+function applyRecentStyles(now: number) {
+  for (let { el, key } of changeUnits()) {
+    let entry = recentChanges.get(key)
+    if (!entry || !isRecent(entry, now)) {
+      if (el.style.backgroundColor) el.style.removeProperty('background-color')
+      el.classList.remove('recently-changed')
+      continue
+    }
+    let intensity = Math.max(0, 1 - (now - entry.at) / RECENT_TTL_MS)
+    el.classList.add('recently-changed')
+    el.style.backgroundColor = `rgba(34, 197, 94, ${(intensity * 0.16).toFixed(3)})`
+  }
+}
+
+function ensureRecentTimer() {
+  if (recentTimer !== undefined) return
+  recentTimer = window.setInterval(() => {
+    let now = logicalNow()
+    pruneRecent(now)
+    applyRecentStyles(now)
+    if (recentChanges.size === 0) {
+      clearInterval(recentTimer)
+      recentTimer = undefined
+    }
+  }, 500)
+}
+
+/**
+ * Compare the just-rendered units against the previous render and stamp the
+ * new/changed ones. `trackChanges` is false for a freshly opened file (reset
+ * baseline, no highlight) and true when re-rendering the same file after a
+ * live update.
+ */
+function updateChangeHighlights(trackChanges: boolean) {
+  let units = changeUnits()
+  if (!trackChanges) {
+    recentChanges.clear()
+    lastUnitKeys = units.map(unit => unit.key)
+    applyRecentStyles(logicalNow())
+    return
+  }
+
+  updateGeneration++
+  let oldCounts = new Map<string, number>()
+  for (let key of lastUnitKeys) oldCounts.set(key, (oldCounts.get(key) ?? 0) + 1)
+
+  let now = logicalNow()
+  for (let unit of units) {
+    let count = oldCounts.get(unit.key) ?? 0
+    if (count > 0) {
+      oldCounts.set(unit.key, count - 1) // unchanged — keep its existing timer
+    } else {
+      recentChanges.set(unit.key, { at: now, gen: updateGeneration }) // added/changed
+    }
+  }
+
+  lastUnitKeys = units.map(unit => unit.key)
+  pruneRecent(now)
+  applyRecentStyles(now)
+  if (recentChanges.size > 0) ensureRecentTimer()
+}
+
 /** Render raw markdown into the content pane. */
-async function renderMarkdown(markdownText: string) {
+async function renderMarkdown(markdownText: string, options: { trackChanges?: boolean } = {}) {
   let token = ++renderToken
   let html = markdownToHtml(markdownText)
   content.innerHTML = html
@@ -246,6 +377,7 @@ async function renderMarkdown(markdownText: string) {
   await renderMermaid(content)
   if (token !== renderToken) return
   rewriteRelativeUrls()
+  updateChangeHighlights(options.trackChanges === true)
 }
 
 /** Apply Prism syntax highlighting to code blocks. */
@@ -464,7 +596,7 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
     printBtn.disabled = false
     copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? data.path}`
     if (!options.silent) content.scrollTop = 0
-    await renderMarkdown(data.content)
+    await renderMarkdown(data.content, { trackChanges: options.silent === true })
   } catch (error) {
     showToast(`Failed to open ${relativePath}: ${(error as Error).message}`)
     if (!currentFilePath) updateEmptyState()
@@ -1311,7 +1443,7 @@ async function openDroppedFile(file: File) {
   copyRawBtn.disabled = false
   printBtn.disabled = false
   updateUrlHash()
-  await renderMarkdown(text)
+  await renderMarkdown(text, { trackChanges: false })
   showToast('Preview only — not in the served folder')
 }
 
