@@ -39,7 +39,8 @@ Cursor's markdown preview does not always pick up changes written by an external
 
 ## Features
 
-- **Live updates** — watches the tree with `fs.watch` (polling fallback) and pushes changes over Server-Sent Events; the open file re-renders in place.
+- **Live updates** — watches the tree with `fs.watch` plus a periodic mtime scan (a safety net that also catches atomic saves `fs.watch` can miss) and pushes changes over Server-Sent Events; the open file re-renders in place.
+- **Recently changed** — after a live update, changed blocks get a green tint that fades over ~20 s. The clock pauses while the tab is hidden, so you don't miss edits made while away, and a block is also cleared after a few further updates so bursts don't pile up.
 - **Cursor-style file switcher** — press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>P</kbd> to search markdown files by name or path. The search is fuzzy and tolerates typos (subsequences, one missing/extra char, and swapped adjacent characters) — e.g. `chng` finds `changelog.md`.
   - **Combine a folder word with a file word** using spaces, e.g. `docs config` — each token must match a path segment, which disambiguates files with the same name in different folders.
   - Opening with an **empty** box shows a **Recent** section (recently opened files) above **All files**.
@@ -111,7 +112,7 @@ The served folder is fixed when you launch the server. To view a different folde
 
 ## How it works
 
-- The Node server (`src/server/`) lists files, serves them, and watches the root with `fs.watch({ recursive: true })` (falling back to polling where unsupported). A change event is debounced and broadcast over SSE at `/api/events`.
+- The Node server (`src/server/`) lists files, serves them, and watches the root with `fs.watch({ recursive: true })` **plus** a periodic mtime scan as a safety net (which also catches atomic saves — temp file + rename — that `fs.watch` alone can miss). Change events are debounced and broadcast over SSE at `/api/events`.
 - The browser client (`src/client/`) fetches the file, renders it, and re-fetches only the currently open file when its path changes.
 - Edits are **view-only by design** — the viewer never writes to your files, so it is safe to leave open next to an agent that is editing the same folder. Safe concurrent *editing* was considered and deliberately left out: a WYSIWYG preview re-serializes the whole file on save (the converter normalizes tables/spacing), so a 1-word edit becomes a whole-file diff and cannot be auto-merged with the agent's whole-file writes without conflicts. Editing in Cursor and keeping this as a live viewer avoids that entirely.
 
@@ -122,6 +123,7 @@ The served folder is fixed when you launch the server. To view a different folde
 | `GET /api/files` | List markdown files (relative paths) and the served root. |
 | `GET /api/search?q=&limit=` | Fuzzy-ranked file search (supports space-separated tokens). |
 | `GET /api/file?path=` | Read one file (JSON, `content` field). |
+| `GET /api/stat?path=` | File `size` and `mtimeMs` (used to disambiguate a dropped file). |
 | `GET /raw/<path>` | Serve a file raw (images, attachments). |
 | `GET /api/events` | Server-Sent Events stream of file changes. |
 

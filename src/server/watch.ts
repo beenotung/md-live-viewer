@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 export type FileChangeEvent = {
-  /** Relative path of the changed file, or null when unknown (polling mode). */
+  /** Relative path of the changed file, or null when unknown. */
   path: string | null
   type: 'change' | 'rename' | 'reload'
   at: number
@@ -12,9 +12,14 @@ export type Unsubscribe = () => void
 
 /**
  * Watches a directory tree and notifies subscribers when files change.
- * Uses recursive `fs.watch` where the platform supports it, and falls back
- * to polling otherwise. Events are debounced so an editor that writes a file
- * in several syscalls still triggers a single notification.
+ *
+ * Uses recursive `fs.watch` for low-latency events, **plus** a periodic mtime
+ * scan as a safety net. The scan matters because `fs.watch` can miss changes
+ * after an atomic save (temp file + rename), which editors and agents often
+ * do — the watched inode is replaced, so later in-place writes go unseen.
+ *
+ * Events are debounced so an editor that writes a file in several syscalls
+ * still triggers a single notification.
  */
 export class FileWatcher {
   private root: string
@@ -49,6 +54,7 @@ export class FileWatcher {
         { recursive: true, persistent: true },
         (eventType, fileName) => {
           let relative = fileName ? fileName.toString().replaceAll('\\', '/') : null
+          if (relative) this.touchCache(relative)
           this.queue({
             path: relative,
             type: eventType === 'rename' ? 'rename' : 'change',
@@ -56,21 +62,38 @@ export class FileWatcher {
           })
         },
       )
-      this.watcher.on('error', () => this.startPolling())
+      this.watcher.on('error', () => this.fallbackToPolling())
+      // Safety net while watching (slower interval than pure polling).
+      this.startPolling(2500)
     } catch {
-      this.startPolling()
+      this.fallbackToPolling()
     }
   }
 
-  private startPolling() {
-    if (this.pollTimer || this.closed) return
+  /** Watch failed — poll more aggressively. */
+  private fallbackToPolling() {
     this.watcher?.close()
     this.watcher = undefined
-    this.pollTimer = setInterval(() => this.poll(), 1000)
+    this.startPolling(1000)
+  }
+
+  private startPolling(intervalMs: number) {
+    if (this.pollTimer || this.closed) return
+    this.pollTimer = setInterval(() => this.poll(), intervalMs)
+  }
+
+  /** Update the mtime cache for one path so the poll does not re-report it. */
+  private touchCache(relative: string) {
+    try {
+      let stats = fs.statSync(path.join(this.root, relative))
+      if (stats.isFile()) this.mtimeCache.set(relative, stats.mtimeMs)
+      else this.mtimeCache.delete(relative)
+    } catch {
+      this.mtimeCache.delete(relative)
+    }
   }
 
   private poll() {
-    let changed: string[] = []
     let stack = ['']
     while (stack.length > 0) {
       let relativeDir = stack.pop()!
@@ -91,21 +114,16 @@ export class FileWatcher {
           continue
         }
         if (!entry.isFile()) continue
-        let absolute = path.join(this.root, relativePath)
         let mtime: number
         try {
-          mtime = fs.statSync(absolute).mtimeMs
+          mtime = fs.statSync(path.join(this.root, relativePath)).mtimeMs
         } catch {
           continue
         }
-        if (this.mtimeCache.get(relativePath) !== mtime) {
-          this.mtimeCache.set(relativePath, mtime)
-          changed.push(relativePath)
-        }
+        if (this.mtimeCache.get(relativePath) === mtime) continue
+        this.mtimeCache.set(relativePath, mtime)
+        this.queue({ path: relativePath, type: 'change', at: Date.now() })
       }
-    }
-    if (changed.length > 0) {
-      this.queue({ path: changed[changed.length - 1], type: 'change', at: Date.now() })
     }
   }
 
