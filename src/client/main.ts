@@ -40,6 +40,8 @@ let themeBtn = document.querySelector<HTMLButtonElement>('#themeBtn')!
 let themeIcon = document.querySelector<HTMLElement>('#themeIcon')!
 let copyPathBtn = document.querySelector<HTMLButtonElement>('#copyPathBtn')!
 let copyLinkBtn = document.querySelector<HTMLButtonElement>('#copyLinkBtn')!
+let copyRawBtn = document.querySelector<HTMLButtonElement>('#copyRawBtn')!
+let printBtn = document.querySelector<HTMLButtonElement>('#printBtn')!
 
 let allFiles: string[] = []
 let paletteResults: string[] = []
@@ -458,6 +460,8 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
     updateUrlHash()
     copyPathBtn.disabled = false
     copyLinkBtn.disabled = false
+    copyRawBtn.disabled = false
+    printBtn.disabled = false
     copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? data.path}`
     if (!options.silent) content.scrollTop = 0
     await renderMarkdown(data.content)
@@ -1100,6 +1104,18 @@ function absolutePathFor(relativePath: string): string | null {
   return serverRoot + separator + relativePath
 }
 
+copyRawBtn.onclick = async () => {
+  if (!currentRaw) return
+  try {
+    await navigator.clipboard.writeText(currentRaw)
+    copyRawBtn.textContent = '✓'
+    showToast('Copied raw Markdown')
+    setTimeout(() => (copyRawBtn.textContent = '📄'), 1500)
+  } catch {
+    showToast('Clipboard blocked')
+  }
+}
+
 copyPathBtn.onclick = async () => {
   let path = currentAbsolutePath()
   if (!path) return
@@ -1130,6 +1146,24 @@ copyLinkBtn.onclick = async () => {
   } catch {
     showToast('Clipboard blocked — copy the address bar instead')
   }
+}
+
+// Save as PDF via the browser's print dialog. Browsers take the PDF's metadata
+// title from `document.title`, so set it to the file name while printing.
+printBtn.onclick = () => {
+  let previousTitle = document.title
+  if (currentFilePath) {
+    let name = currentFilePath.slice(currentFilePath.lastIndexOf('/') + 1)
+    document.title = name.replace(/\.(md|markdown|mdx|mdown|mkd)$/i, '')
+  }
+  let restore = () => {
+    document.title = previousTitle
+    window.removeEventListener('afterprint', restore)
+  }
+  window.addEventListener('afterprint', restore)
+  window.print()
+  // Fallback in case `afterprint` does not fire.
+  setTimeout(restore, 5000)
 }
 
 // ---------------------------------------------------------------------------
@@ -1179,6 +1213,108 @@ async function fetchFiles(): Promise<string[]> {
   return data.files
 }
 
+// ---------------------------------------------------------------------------
+// Drag & drop a file to open it
+// ---------------------------------------------------------------------------
+
+function dataTransferHasFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files')
+}
+
+function setupDropToOpen() {
+  let overlay = document.querySelector<HTMLElement>('#dropOverlay')!
+  let depth = 0
+
+  window.addEventListener('dragenter', event => {
+    if (!dataTransferHasFiles(event)) return
+    event.preventDefault()
+    depth++
+    overlay.hidden = false
+  })
+  window.addEventListener('dragover', event => {
+    if (!dataTransferHasFiles(event)) return
+    event.preventDefault()
+  })
+  window.addEventListener('dragleave', event => {
+    if (!dataTransferHasFiles(event)) return
+    event.preventDefault()
+    depth = Math.max(0, depth - 1)
+    if (depth === 0) overlay.hidden = true
+  })
+  window.addEventListener('drop', event => {
+    if (!dataTransferHasFiles(event)) return
+    event.preventDefault()
+    depth = 0
+    overlay.hidden = true
+    let file = event.dataTransfer?.files?.[0]
+    if (file) void openDroppedFile(file)
+  })
+}
+
+/**
+ * Browsers hide a dropped file's OS path, so we recover it by matching the
+ * dropped file's name against the served tree. That opens the real (watched)
+ * file, with working links/images. A file from outside the served folder is
+ * shown as a static, client-side preview (content only).
+ */
+async function openDroppedFile(file: File) {
+  let matches = allFiles.filter(
+    candidate => candidate === file.name || candidate.endsWith('/' + file.name),
+  )
+
+  if (matches.length === 1) {
+    showToast(`Opened ${matches[0]}`)
+    await loadFile(matches[0])
+    return
+  }
+
+  if (matches.length > 1) {
+    // Browsers hide the dropped file's path; disambiguate by metadata.
+    // `file.lastModified` is the file's mtime, so size + mtime pin it down.
+    let exact: string[] = []
+    let sameSize: string[] = []
+    for (let candidate of matches) {
+      try {
+        let response = await fetch(`/api/stat?path=${encodeURIComponent(candidate)}`)
+        if (!response.ok) continue
+        let stat = (await response.json()) as { size: number; mtimeMs: number }
+        if (stat.size === file.size) {
+          sameSize.push(candidate)
+          if (Math.round(stat.mtimeMs) === file.lastModified) exact.push(candidate)
+        }
+      } catch {
+        // ignore
+      }
+    }
+    let winner = exact.length === 1 ? exact[0] : sameSize.length === 1 ? sameSize[0] : null
+    if (winner) {
+      showToast(`Opened ${winner}`)
+      await loadFile(winner)
+      return
+    }
+    // Still ambiguous — let the user pick.
+    await openPalette()
+    paletteInput.value = file.name
+    await runPaletteSearch()
+    showToast(`${matches.length} files named ${file.name} — pick one`)
+    return
+  }
+
+  // Not in the served folder: static preview, no live updates.
+  let text = await file.text()
+  currentFilePath = null
+  currentRaw = text
+  currentPath.textContent = `📄 ${file.name} (dropped)`
+  document.title = `${file.name} (dropped) - md-live-viewer`
+  copyPathBtn.disabled = true
+  copyLinkBtn.disabled = true
+  copyRawBtn.disabled = false
+  printBtn.disabled = false
+  updateUrlHash()
+  await renderMarkdown(text)
+  showToast('Preview only — not in the served folder')
+}
+
 async function boot() {
   paletteMode = getSavedPaletteMode()
   applyPaletteModeLabel()
@@ -1208,6 +1344,7 @@ async function boot() {
     if (path && path !== currentFilePath) loadFile(path)
   })
 
+  setupDropToOpen()
   connectEvents()
 }
 
