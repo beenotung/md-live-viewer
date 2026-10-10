@@ -201,6 +201,23 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       return
     }
 
+    if (url.pathname === '/api/stat') {
+      let relative = url.searchParams.get('path') ?? ''
+      try {
+        let absolute = resolveWithinRoot(root, relative)
+        let stats = fs.statSync(absolute)
+        sendJson(response, 200, {
+          path: relative,
+          size: stats.size,
+          mtimeMs: stats.mtimeMs,
+        })
+      } catch (error) {
+        let statusCode = (error as { statusCode?: number }).statusCode ?? 404
+        sendJson(response, statusCode, { error: (error as Error).message })
+      }
+      return
+    }
+
     if (url.pathname === '/api/file') {
       let relative = url.searchParams.get('path') ?? ''
       try {
