@@ -199,6 +199,12 @@
         border: 1px solid var(--border);
         padding: 0.25rem 0.6rem;
       }
+      /* `<th>` defaults to `text-align: center`; keep headers without an
+         explicit alignment left-aligned (like their cells), while still
+         honouring `:---:`/`---:` column alignment. */
+      #content th:not([align]) {
+        text-align: start;
+      }
       #content pre {
         border: 1px solid var(--border);
         border-radius: 0.4rem;
