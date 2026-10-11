@@ -39,3 +39,15 @@ test('parseArgs rejects an invalid port and unknown flags', () => {
   assert.throws(() => parseArgs(['--port', 'abc'], '/work'))
   assert.throws(() => parseArgs(['--nope'], '/work'))
 })
+
+test('parseArgs parses --fade durations (default 5m)', () => {
+  assert.equal(parseArgs([], '/work').fadeMs, 300000)
+  assert.equal(parseArgs(['--fade', '60'], '/work').fadeMs, 60000)
+  assert.equal(parseArgs(['--fade', '90s'], '/work').fadeMs, 90000)
+  assert.equal(parseArgs(['--fade=2m'], '/work').fadeMs, 120000)
+  assert.equal(parseArgs(['--fade', '1500ms'], '/work').fadeMs, 1500)
+  assert.equal(parseArgs(['--fade', '0'], '/work').fadeMs, 0)
+  assert.equal(parseArgs(['--fade', 'off'], '/work').fadeMs, 0)
+  assert.equal(parseArgs(['--no-fade'], '/work').fadeMs, 0)
+  assert.throws(() => parseArgs(['--fade', 'soon'], '/work'))
+})

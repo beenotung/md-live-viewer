@@ -59,12 +59,14 @@ let toastTimeout: number | undefined
 let paletteSearchToken = 0
 
 // "Recently changed" tracking (block-level diff with decay).
-// A block stays highlighted until it is older than RECENT_TTL_MS (time) OR
+// A block stays highlighted until it is older than the fade window (time) OR
 // more than MAX_RECENT_UPDATES live updates have happened since (whichever
 // comes first) — the update cap bounds clutter during edit bursts.
+// The fade window is set by the server's `--fade` option and read from
+// /api/config (0 disables the highlighting).
 let lastUnitKeys: string[] = []
 const recentChanges = new Map<string, { at: number; gen: number }>()
-const RECENT_TTL_MS = 20000
+let recentTtlMs = 300000
 const MAX_RECENT_UPDATES = 5
 let updateGeneration = 0
 let recentTimer: number | undefined
@@ -291,7 +293,8 @@ function blockKey(el: HTMLElement): string {
 /** A change is still "recent" if it's young enough in both time and updates. */
 function isRecent(entry: { at: number; gen: number }, now: number): boolean {
   return (
-    now - entry.at <= RECENT_TTL_MS &&
+    recentTtlMs > 0 &&
+    now - entry.at <= recentTtlMs &&
     updateGeneration - entry.gen <= MAX_RECENT_UPDATES
   )
 }
@@ -310,7 +313,7 @@ function applyRecentStyles(now: number) {
       el.classList.remove('recently-changed')
       continue
     }
-    let intensity = Math.max(0, 1 - (now - entry.at) / RECENT_TTL_MS)
+    let intensity = Math.max(0, 1 - (now - entry.at) / recentTtlMs)
     el.classList.add('recently-changed')
     el.style.backgroundColor = `rgba(34, 197, 94, ${(intensity * 0.16).toFixed(3)})`
   }
@@ -1345,6 +1348,17 @@ async function fetchFiles(): Promise<string[]> {
   return data.files
 }
 
+/** Read the server's "recently changed" fade window (set by `--fade`). */
+async function fetchConfig(): Promise<void> {
+  try {
+    let response = await fetch('/api/config')
+    let data = (await response.json()) as { fadeMs?: number }
+    if (typeof data.fadeMs === 'number') recentTtlMs = data.fadeMs
+  } catch {
+    // keep the built-in default fade window
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Drag & drop a file to open it
 // ---------------------------------------------------------------------------
@@ -1455,6 +1469,7 @@ async function boot() {
   } catch {
     // palette will retry
   }
+  await fetchConfig()
 
   let requested =
     readStateFromHash().file ?? new URLSearchParams(location.search).get('file')
