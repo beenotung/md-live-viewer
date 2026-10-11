@@ -114,7 +114,6 @@
       #themeBtn,
       #copyRawBtn,
       #copyPathBtn,
-      #copyLinkBtn,
       #printBtn {
         display: inline-flex;
         align-items: center;
@@ -132,13 +131,11 @@
       #themeBtn:hover,
       #copyRawBtn:hover:not(:disabled),
       #copyPathBtn:hover:not(:disabled),
-      #copyLinkBtn:hover:not(:disabled),
       #printBtn:hover:not(:disabled) {
         background: var(--accent-soft);
       }
       #copyRawBtn:disabled,
       #copyPathBtn:disabled,
-      #copyLinkBtn:disabled,
       #printBtn:disabled {
         opacity: 0.4;
         cursor: default;
@@ -688,8 +685,7 @@
       </button>
       <span id="currentPath"></span>
       <button id="copyRawBtn" title="Copy raw Markdown" disabled>📄</button>
-      <button id="copyPathBtn" title="Copy absolute path" disabled>📋</button>
-      <button id="copyLinkBtn" title="Copy link to this file" disabled>🔗</button>
+      <button id="copyPathBtn" title="Copy absolute path" disabled>📁</button>
       <button id="printBtn" title="Save as PDF (opens the print dialog)" disabled>
         🖨
       </button>

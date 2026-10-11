@@ -39,7 +39,6 @@ let paletteModeLabel = document.querySelector<HTMLElement>('#paletteModeLabel')!
 let themeBtn = document.querySelector<HTMLButtonElement>('#themeBtn')!
 let themeIcon = document.querySelector<HTMLElement>('#themeIcon')!
 let copyPathBtn = document.querySelector<HTMLButtonElement>('#copyPathBtn')!
-let copyLinkBtn = document.querySelector<HTMLButtonElement>('#copyLinkBtn')!
 let copyRawBtn = document.querySelector<HTMLButtonElement>('#copyRawBtn')!
 let printBtn = document.querySelector<HTMLButtonElement>('#printBtn')!
 
@@ -594,7 +593,6 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
     rememberFile(data.path)
     updateUrlHash()
     copyPathBtn.disabled = false
-    copyLinkBtn.disabled = false
     copyRawBtn.disabled = false
     printBtn.disabled = false
     copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? data.path}`
@@ -1239,13 +1237,18 @@ function absolutePathFor(relativePath: string): string | null {
   return serverRoot + separator + relativePath
 }
 
+// Icons captured from the markup, so the transient "copied" tick restores the
+// current icon instead of a hard-coded one that can drift from the HTML.
+const COPY_RAW_ICON = copyRawBtn.textContent ?? ''
+const COPY_PATH_ICON = copyPathBtn.textContent ?? ''
+
 copyRawBtn.onclick = async () => {
   if (!currentRaw) return
   try {
     await navigator.clipboard.writeText(currentRaw)
     copyRawBtn.textContent = '✓'
     showToast('Copied raw Markdown')
-    setTimeout(() => (copyRawBtn.textContent = '📄'), 1500)
+    setTimeout(() => (copyRawBtn.textContent = COPY_RAW_ICON), 1500)
   } catch {
     showToast('Clipboard blocked')
   }
@@ -1258,7 +1261,7 @@ copyPathBtn.onclick = async () => {
     await navigator.clipboard.writeText(path)
     copyPathBtn.textContent = '✓'
     showToast('Copied absolute path')
-    setTimeout(() => (copyPathBtn.textContent = '📋'), 1500)
+    setTimeout(() => (copyPathBtn.textContent = COPY_PATH_ICON), 1500)
   } catch {
     showToast('Clipboard blocked — path is in the title')
   }
@@ -1269,19 +1272,6 @@ currentPath.title = 'Click to open the file picker (Ctrl/Cmd + P)'
 currentPath.addEventListener('click', () => {
   openPalette()
 })
-
-copyLinkBtn.onclick = async () => {
-  if (!currentFilePath) return
-  let url = `${location.origin}${location.pathname}#file=${encodePathForHash(currentFilePath)}`
-  try {
-    await navigator.clipboard.writeText(url)
-    copyLinkBtn.textContent = '✓'
-    showToast('Copied link to this file')
-    setTimeout(() => (copyLinkBtn.textContent = '🔗'), 1500)
-  } catch {
-    showToast('Clipboard blocked — copy the address bar instead')
-  }
-}
 
 // Save as PDF via the browser's print dialog. Browsers take the PDF's metadata
 // title from `document.title`, so set it to the file name while printing.
@@ -1453,7 +1443,6 @@ async function openDroppedFile(file: File) {
   currentPath.textContent = `📄 ${file.name} (dropped)`
   document.title = `${file.name} (dropped) - md-live-viewer`
   copyPathBtn.disabled = true
-  copyLinkBtn.disabled = true
   copyRawBtn.disabled = false
   printBtn.disabled = false
   updateUrlHash()
