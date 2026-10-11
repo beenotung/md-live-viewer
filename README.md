@@ -28,6 +28,7 @@ This puts these equivalent commands on your `PATH` (the examples below use `md-v
 
 ```
 md-view
+md-viewer
 md-live-viewer
 ```
 
