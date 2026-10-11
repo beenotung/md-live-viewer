@@ -114,7 +114,8 @@
       #themeBtn,
       #copyRawBtn,
       #copyPathBtn,
-      #printBtn {
+      #printBtn,
+      #wrapBtn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -128,10 +129,20 @@
         cursor: pointer;
         font-size: 0.9rem;
       }
+      #wrapBtn {
+        width: auto;
+        padding: 0 0.6rem;
+        font-size: 0.8rem;
+      }
+      #wrapBtn.active {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+      }
       #themeBtn:hover,
       #copyRawBtn:hover:not(:disabled),
       #copyPathBtn:hover:not(:disabled),
-      #printBtn:hover:not(:disabled) {
+      #printBtn:hover:not(:disabled),
+      #wrapBtn:hover {
         background: var(--accent-soft);
       }
       #copyRawBtn:disabled,
@@ -293,6 +304,11 @@
       #content pre.plain-text {
         white-space: pre;
         tab-size: 2;
+      }
+      /* Opt-in text wrapping (the Wrap button in the header). */
+      #content.wrap-text pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       #content table {
         border-collapse: collapse;
@@ -799,6 +815,7 @@
       <button id="printBtn" title="Save as PDF (opens the print dialog)" disabled>
         🖨
       </button>
+      <button id="wrapBtn" type="button" title="Toggle text wrapping" aria-pressed="false">Wrap</button>
       <button id="themeBtn" title="Theme: system / light / dark">
         <span id="themeIcon">🖥️</span>
       </button>
