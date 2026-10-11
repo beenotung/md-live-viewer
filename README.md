@@ -40,7 +40,7 @@ Cursor's markdown preview does not always pick up changes written by an external
 ## Features
 
 - **Live updates** — watches the tree with `fs.watch` plus a periodic mtime scan (a safety net that also catches atomic saves `fs.watch` can miss) and pushes changes over Server-Sent Events; the open file re-renders in place.
-- **Recently changed** — after a live update, changed blocks get a green tint that fades over ~20 s. The clock pauses while the tab is hidden, so you don't miss edits made while away, and a block is also cleared after a few further updates so bursts don't pile up.
+- **Recently changed** — after a live update, changed blocks get a green tint that fades over 5 minutes by default (tune with `--fade`, or set it to `0` to disable). The clock pauses while the tab is hidden, so you don't miss edits made while away, and a block is also cleared after a few further updates so bursts don't pile up.
 - **Cursor-style file switcher** — press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>P</kbd> to search markdown files by name or path. The search is fuzzy and tolerates typos (subsequences, one missing/extra char, and swapped adjacent characters) — e.g. `chng` finds `changelog.md`.
   - **Combine a folder word with a file word** using spaces, e.g. `docs config` — each token must match a path segment, which disambiguates files with the same name in different folders.
   - Opening with an **empty** box shows a **Recent** section (recently opened files) above **All files**.
@@ -80,6 +80,7 @@ Options and the optional `[dir]` may appear in any order.
 | `--host <h>` | Host to bind (default `localhost`). |
 | `--open` / `--no-open` | Open the browser automatically (default on). |
 | `--all` | List all files, not only markdown. |
+| `--fade <dur>` | How long the "recently changed" tint lasts (default `5m`; e.g. `60s`, `5m`; `0` or `--no-fade` disables). |
 | `-h, --help` | Show help. |
 
 Long options accept both `--port 8200` and `--port=8200`.
@@ -124,6 +125,7 @@ The served folder is fixed when you launch the server. To view a different folde
 | `GET /api/search?q=&limit=` | Fuzzy-ranked file search (supports space-separated tokens). |
 | `GET /api/file?path=` | Read one file (JSON, `content` field). |
 | `GET /api/stat?path=` | File `size` and `mtimeMs` (used to disambiguate a dropped file). |
+| `GET /api/config` | Client config (currently `fadeMs`, the "recently changed" fade window). |
 | `GET /raw/<path>` | Serve a file raw (images, attachments). |
 | `GET /api/events` | Server-Sent Events stream of file changes. |
 

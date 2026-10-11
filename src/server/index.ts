@@ -34,6 +34,20 @@ export type CliOptions = {
   port: number
   open: boolean
   includeAllFiles: boolean
+  /** How long the "recently changed" tint lasts, in ms (0 disables it). */
+  fadeMs: number
+}
+
+/** Parse a duration like `300`, `90s`, `5m`, `1500ms`, or `off` (0) → ms. */
+export function parseDuration(value: string): number {
+  let trimmed = value.trim()
+  if (/^(off|none|no|false)$/i.test(trimmed)) return 0
+  let match = /^(\d+(?:\.\d+)?)\s*(ms|s|m)?$/i.exec(trimmed)
+  if (!match) throw new Error(`Invalid duration: ${value}`)
+  let amount = Number(match[1])
+  let unit = (match[2] ?? 's').toLowerCase()
+  let factor = unit === 'ms' ? 1 : unit === 'm' ? 60000 : 1000
+  return Math.round(amount * factor)
 }
 
 export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
@@ -43,6 +57,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     port: 8137,
     open: true,
     includeAllFiles: false,
+    fadeMs: 300000,
   }
   let positional: string[] = []
   for (let index = 0; index < argv.length; index++) {
@@ -72,6 +87,10 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
       options.open = false
     } else if (arg === '--all') {
       options.includeAllFiles = true
+    } else if (arg === '--fade') {
+      options.fadeMs = parseDuration(takeValue())
+    } else if (arg === '--no-fade') {
+      options.fadeMs = 0
     } else if (arg === '--help' || arg === '-h') {
       options.port = -1
     } else if (arg.startsWith('-')) {
@@ -100,6 +119,8 @@ Options:
       --open       Open the browser (default)
       --no-open    Do not open the browser
       --all        List all files, not only markdown
+      --fade <d>   How long "recently changed" stays tinted (default 5m;
+                   e.g. 60s, 5m; 0 or --no-fade disables)
   -h, --help       Show this help
 
 Examples:
@@ -186,6 +207,11 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
 
   let server = http.createServer((request, response) => {
     let url = new URL(request.url ?? '/', `http://${request.headers.host}`)
+
+    if (url.pathname === '/api/config') {
+      sendJson(response, 200, { fadeMs: options.fadeMs })
+      return
+    }
 
     if (url.pathname === '/api/files') {
       sendJson(response, 200, { root, files: getFiles(true) })
@@ -289,10 +315,17 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   let displayHost = options.host === '0.0.0.0' ? 'localhost' : options.host
   let url = `http://${displayHost}:${port}/`
 
+  let fadeLabel =
+    options.fadeMs <= 0
+      ? 'off'
+      : options.fadeMs % 60000 === 0
+        ? `${options.fadeMs / 60000}m`
+        : `${Math.round(options.fadeMs / 1000)}s`
   console.log(`\n  md-live-viewer`)
   console.log(`  root: ${root}`)
   console.log(`  url:  ${url}`)
-  console.log(`  watch mode: ${watcher.mode}\n`)
+  console.log(`  watch mode: ${watcher.mode}`)
+  console.log(`  fade: ${fadeLabel} (--fade <dur>)\n`)
 
   if (options.open) {
     openBrowser({ url, host: options.host, port })
