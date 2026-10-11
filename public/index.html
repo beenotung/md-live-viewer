@@ -184,6 +184,41 @@
       #content img {
         max-width: 100%;
       }
+      /* Non-Markdown files (image / audio / video / PDF) shown straight from /raw. */
+      #content .media-view {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 60vh;
+      }
+      #content .media-view img,
+      #content .media-view video {
+        max-width: 100%;
+        max-height: calc(100vh - 7rem);
+        border-radius: 0.4rem;
+      }
+      #content .media-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+        width: min(32rem, 100%);
+      }
+      #content .media-card .media-name {
+        font-size: 0.9rem;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+        text-align: center;
+      }
+      #content .media-card audio {
+        width: 100%;
+      }
+      #content iframe.media-frame {
+        width: 100%;
+        height: calc(100vh - 7rem);
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+      }
       #content table {
         border-collapse: collapse;
         width: fit-content;
