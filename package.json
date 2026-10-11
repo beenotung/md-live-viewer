@@ -1,6 +1,6 @@
 {
   "name": "md-live-viewer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Live-updating local markdown viewer. Run `npx md-live-viewer` in any folder to preview markdown files and see edits (e.g. from an AI agent) appear instantly -- no manual refresh.",
   "type": "module",
   "bin": {
