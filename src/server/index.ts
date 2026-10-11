@@ -14,6 +14,19 @@ import { FileWatcher } from './watch.ts'
 // dist/server.js lives one level below the package root.
 let packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 
+/** Version from the shipped package.json, for the startup banner. */
+const PACKAGE_VERSION = readPackageVersion()
+
+function readPackageVersion(): string {
+  try {
+    let raw = fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')
+    let value = (JSON.parse(raw) as { version?: unknown }).version
+    return typeof value === 'string' ? value : ''
+  } catch {
+    return ''
+  }
+}
+
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -398,7 +411,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       : options.fadeMs % 60000 === 0
         ? `${options.fadeMs / 60000}m`
         : `${Math.round(options.fadeMs / 1000)}s`
-  console.log(`\n  md-live-viewer`)
+  console.log(`\n  md-live-viewer${PACKAGE_VERSION ? ` v${PACKAGE_VERSION}` : ''}`)
   console.log(`  root: ${root}`)
   console.log(`  url:  ${url}`)
   console.log(`  watch mode: ${watcher.mode}`)
