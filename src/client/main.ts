@@ -41,6 +41,7 @@ let themeIcon = document.querySelector<HTMLElement>('#themeIcon')!
 let copyPathBtn = document.querySelector<HTMLButtonElement>('#copyPathBtn')!
 let copyRawBtn = document.querySelector<HTMLButtonElement>('#copyRawBtn')!
 let printBtn = document.querySelector<HTMLButtonElement>('#printBtn')!
+let wrapBtn = document.querySelector<HTMLButtonElement>('#wrapBtn')!
 
 let allFiles: string[] = []
 let paletteResults: string[] = []
@@ -855,8 +856,10 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
     copyRawBtn.disabled = false
     if (!options.silent) content.scrollTop = 0
     if (isMarkdownPath(data.path)) {
+      setWrapForFile('markdown')
       await renderMarkdown(data.content, { trackChanges: options.silent === true })
     } else {
+      setWrapForFile(CODE_LANGUAGES[fileExtension(data.path)] ? 'code' : 'prose')
       renderPlainText(data.path, data.content)
     }
   } catch (error) {
@@ -1587,6 +1590,43 @@ themeBtn.onclick = () => {
 }
 
 applyTheme(getSavedTheme())
+
+// ---------------------------------------------------------------------------
+// Text wrapping (Markdown code blocks and plain-text views)
+// ---------------------------------------------------------------------------
+
+type WrapPref = 'on' | 'off' | null
+let wrapPref: WrapPref = readWrapPref()
+let wrapActive = false
+
+function readWrapPref(): WrapPref {
+  let value = localStorage.getItem('md-live-viewer:wrap')
+  return value === 'on' || value === 'off' ? value : null
+}
+
+function applyWrap() {
+  content.classList.toggle('wrap-text', wrapActive)
+  wrapBtn.classList.toggle('active', wrapActive)
+  wrapBtn.setAttribute('aria-pressed', String(wrapActive))
+  wrapBtn.title = wrapActive
+    ? 'Text wrapping: on (click to turn off)'
+    : 'Text wrapping: off (click to turn on)'
+}
+
+/** Pick the wrap state for a freshly opened file (an explicit pref wins). */
+function setWrapForFile(kind: 'markdown' | 'code' | 'prose') {
+  wrapActive = wrapPref === null ? kind === 'prose' : wrapPref === 'on'
+  applyWrap()
+}
+
+wrapBtn.onclick = () => {
+  wrapActive = !wrapActive
+  wrapPref = wrapActive ? 'on' : 'off'
+  localStorage.setItem('md-live-viewer:wrap', wrapPref)
+  applyWrap()
+}
+
+applyWrap()
 
 // ---------------------------------------------------------------------------
 // Boot
