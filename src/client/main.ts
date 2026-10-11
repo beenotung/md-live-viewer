@@ -649,6 +649,134 @@ function setCurrentFilePath(path: string) {
   copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? path}`
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  let units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`
+}
+
+/** Friendly name for common non-previewable types, shown on the card. */
+const FILE_KIND: Record<string, string> = {
+  pptx: 'PowerPoint', ppt: 'PowerPoint', ppsx: 'PowerPoint', pps: 'PowerPoint',
+  docx: 'Word', doc: 'Word', xlsx: 'Excel', xls: 'Excel',
+  odt: 'ODF text', ods: 'ODF sheet', odp: 'ODF slides',
+  pages: 'Pages', numbers: 'Numbers', key: 'Keynote',
+  zip: 'Zip archive', rar: 'RAR archive', '7z': '7z archive', tar: 'Tar archive',
+  gz: 'Gzip', tgz: 'Gzip', bz2: 'Bzip2', xz: 'XZ',
+  exe: 'Windows app', dll: 'Library', so: 'Library', dylib: 'Library', bin: 'Binary',
+  dmg: 'Disk image', iso: 'Disk image', apk: 'Android app', jar: 'Java archive',
+  psd: 'Photoshop', ai: 'Illustrator', db: 'Database', sqlite: 'Database',
+}
+
+/** Card for a file the viewer cannot display (Office docs, archives, ...). */
+function renderUnsupported(relativePath: string, size?: number) {
+  let name = relativePath.slice(relativePath.lastIndexOf('/') + 1)
+  let ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : ''
+
+  let wrap = document.createElement('div')
+  wrap.className = 'media-view'
+  let card = document.createElement('div')
+  card.className = 'file-card'
+
+  let icon = document.createElement('div')
+  icon.className = 'file-icon'
+  icon.textContent = (ext || 'file').toUpperCase().slice(0, 5)
+
+  let title = document.createElement('div')
+  title.className = 'file-name'
+  title.textContent = name
+
+  let meta = document.createElement('div')
+  meta.className = 'file-meta'
+  meta.textContent = [FILE_KIND[ext], typeof size === 'number' ? formatBytes(size) : null, 'preview not supported']
+    .filter(Boolean)
+    .join(' · ')
+
+  let link = document.createElement('a')
+  link.className = 'file-open'
+  link.href = rawUrl(relativePath)
+  link.target = '_blank'
+  link.rel = 'noreferrer'
+  link.textContent = 'Open ↗'
+
+  card.append(icon, title, meta, link)
+  wrap.append(card)
+  content.replaceChildren(wrap)
+}
+
+/** Point the UI at a file the viewer can't display, then show the card. */
+function showUnsupported(relativePath: string, size?: number) {
+  setCurrentFilePath(relativePath)
+  currentRaw = ''
+  copyRawBtn.disabled = true
+  printBtn.disabled = true
+  content.scrollTop = 0
+  renderUnsupported(relativePath, size)
+}
+
+// ---------------------------------------------------------------------------
+// Click-to-enlarge (only for images already scaled down to fit)
+// ---------------------------------------------------------------------------
+
+let lightbox = document.querySelector<HTMLElement>('#lightbox')!
+let lightboxImg = document.querySelector<HTMLImageElement>('#lightboxImg')!
+
+/** True when the image is rendered smaller than its natural size. */
+function isDownscaled(img: HTMLImageElement): boolean {
+  return img.naturalWidth > img.clientWidth + 1 || img.naturalHeight > img.clientHeight + 1
+}
+
+function refreshZoomable(img: HTMLImageElement) {
+  img.classList.toggle('zoomable', img.complete && img.naturalWidth > 0 && isDownscaled(img))
+}
+
+function openLightbox(img: HTMLImageElement) {
+  lightboxImg.src = img.currentSrc || img.src
+  lightboxImg.alt = img.alt
+  lightbox.hidden = false
+}
+
+function closeLightbox() {
+  lightbox.hidden = true
+  lightboxImg.removeAttribute('src')
+}
+
+content.addEventListener(
+  'load',
+  event => {
+    if (event.target instanceof HTMLImageElement) refreshZoomable(event.target)
+  },
+  true,
+)
+
+content.addEventListener('click', event => {
+  if (!(event.target instanceof HTMLImageElement)) return
+  if (event.target.closest('a')) return // images inside links keep navigating
+  if (!isDownscaled(event.target)) return // already 1:1 — nothing to reveal
+  event.preventDefault()
+  openLightbox(event.target)
+})
+
+window.addEventListener('resize', () => {
+  content.querySelectorAll('img').forEach(img => refreshZoomable(img))
+})
+
+lightbox.addEventListener('click', event => {
+  if (event.target === lightbox || (event.target as HTMLElement).id === 'lightboxClose') {
+    closeLightbox()
+  }
+})
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !lightbox.hidden) closeLightbox()
+})
+
 // ---------------------------------------------------------------------------
 // Loading files
 // ---------------------------------------------------------------------------
@@ -674,6 +802,11 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
     }
 
     let response = await fetch(`/api/file?path=${encodeURIComponent(relativePath)}`)
+    if (response.status === 413 || response.status === 415) {
+      let body = await response.json().catch(() => ({}))
+      showUnsupported(relativePath, typeof body.size === 'number' ? body.size : undefined)
+      return
+    }
     if (!response.ok) {
       let body = await response.json().catch(() => ({}))
       throw new Error(body.error ?? `HTTP ${response.status}`)
