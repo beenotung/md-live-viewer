@@ -5,6 +5,7 @@
   "type": "module",
   "bin": {
     "md-view": "bin/md-view.js",
+    "md-viewer": "bin/md-view.js",
     "md-live-viewer": "bin/md-view.js"
   },
   "scripts": {
