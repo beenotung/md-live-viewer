@@ -40,28 +40,43 @@ Cursor's markdown preview does not always pick up changes written by an external
 
 ## Features
 
-- **Live updates** — watches the tree with `fs.watch` plus a periodic mtime scan (a safety net that also catches atomic saves `fs.watch` can miss) and pushes changes over Server-Sent Events; the open file re-renders in place.
-- **Recently changed** — after a live update, changed blocks get a green tint that fades over 5 minutes by default (tune with `--fade`, or set it to `0` to disable). The clock pauses while the tab is hidden, so you don't miss edits made while away, and a block is also cleared after a few further updates so bursts don't pile up.
-- **Cursor-style file switcher** — press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>P</kbd> to search markdown files by name or path. The search is fuzzy and tolerates typos (subsequences, one missing/extra char, and swapped adjacent characters) — e.g. `chng` finds `changelog.md`.
-  - **Combine a folder word with a file word** using spaces, e.g. `docs config` — each token must match a path segment, which disambiguates files with the same name in different folders.
-  - Opening with an **empty** box shows a **Recent** section (recently opened files) above **All files**.
-  - A **view toggle** (top-right of the palette) switches between the flat searchable **List** (default) and a **Tree** of the folder structure. Tree mode auto-opens at the folder of the current file and highlights its siblings, so nearby files are quick to find. Click a folder to expand/collapse; typing still does a flat search. The choice is remembered.
-  - **Hover**, `↑`/`↓`, and scrolling all move the same selection (the one `Enter` opens), so keyboard and mouse stay in sync.
-  - Each row has a **⧉** button (copy the absolute path without opening); rows under **Recent** also have a **✕** to drop them from the list.
-- **Bookmarkable, shareable links** — the open file is kept in the URL hash (`#file=path/to/file.md`), so you can bookmark it, copy the address, or open it in another browser. The 📁 button copies the absolute filesystem path. Slashes stay literal (`/`) so links stay readable; `%2F` links still work.
-- **Scoped by design** — the server serves exactly the folder you launch it with (the argument, defaulting to the current directory) and **cannot be re-pointed from the UI or a URL**. File access is further confined to that tree, including a realpath check that rejects symlinks pointing outside it.
-- **In-preview navigation** — links to other markdown files open inside the viewer; images and other files are served through it too.
-- **Drag & drop** — drop a `.md` file onto the window to open it (an overlay appears while dragging). Browsers hide a dropped file's path, so it's matched by name against the served folder; when several files share the name, **size and mtime** (`File.lastModified`) pick the right one. A unique match opens the real (live-watched) file; otherwise it's shown as a static, read-only preview, or the palette opens to choose.
-- **Full markdown rendering** — GitHub Flavored Markdown (tables, task lists, strikethrough) via `micromark`.
-- **Math** — `$inline$` and `$$block$$` via KaTeX (with currency-safe parsing, so `HK$528K` is not treated as math).
-- **Mermaid diagrams** — ` ```mermaid ` blocks render to SVG.
-- **Syntax highlighting** — fenced code blocks are highlighted with [Prism](https://prismjs.com/) (JS/TS/JSX/TSX, JSON, YAML, bash, Python, Markdown, SQL, Go, Rust, CSS), with light/dark token themes.
-- **Relative images/links** — resolved against the markdown file's folder and served through the viewer.
-- **Light / dark theme** — click the theme button in the header to cycle **system → light → dark**. The choice is remembered per browser; the default follows your OS setting.
-- **Copy the raw Markdown** — click the 📄 button to copy the open file's source.
-- **Copy the absolute path** — click the 📁 button to copy the open file's full path to the clipboard (handy for pasting into a terminal or another tool).
-- **Save as PDF** — click the 🖨 button to open the browser's print dialog and save the rendered page as a PDF (no app chrome, and the PDF's metadata title is set to the file name).
-- Zero runtime dependencies on the server; the client bundle is prebuilt, so `npx` just works.
+**Live preview**
+
+- **Live updates** — the open file re-renders the moment anything writes it (an editor, a script, or an AI agent), pushed over Server-Sent Events.
+- **Recently changed** — changed blocks get a green tint that fades over 5 minutes (tune with `--fade`, disable with `--no-fade`). The clock pauses while the tab is hidden, and a block also clears after a few further updates so bursts don't pile up.
+
+**Markdown rendering**
+
+- **GitHub Flavored Markdown** — tables, task lists and strikethrough, via `micromark`.
+- **Math, Mermaid and syntax highlighting** — `$inline$` / `$$block$$` via KaTeX (currency-safe, so `HK$528K` is not math), ` ```mermaid ` blocks to SVG, and fenced code via [Prism](https://prismjs.com/) (JS/TS/JSX/TSX, JSON, YAML, bash, Python, Markdown, SQL, Go, Rust, CSS) with light/dark themes.
+- **Relative images and links** — resolved against the file's folder and served through the viewer.
+
+**Other file types** (list them with `--all`)
+
+- **Images, audio, video and PDF** open with a built-in viewer; clicking a downscaled image enlarges it.
+- **Text and code** are shown verbatim (never parsed as Markdown) and highlighted by extension, with a **Wrap** toggle.
+- **Binaries** (pptx/docx/xlsx/zip/…) show a card with the size and an **Open** action, instead of garbled text.
+
+**Finding and opening files**
+
+- **Cursor-style switcher** — <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>P</kbd>: fuzzy, typo-tolerant search by name or path (`chng` finds `changelog.md`).
+  - **Folder + name** — space-separated tokens each match a path segment, e.g. `docs config`, to disambiguate same-named files in different folders.
+  - **List / Tree toggle** — a flat searchable list (default) or a collapsible tree that auto-opens at the current file; recent files come first and the choice is remembered.
+  - **Keyboard and mouse stay in sync** — hover, `↑`/`↓` and scrolling move the same highlighted row (the one `Enter` opens); each row has a copy-path button.
+- **Bookmarkable links** — the open file lives in the URL hash (`#file=path/to/file.md`); links to other Markdown files open in place.
+- **Drag & drop** — drop a `.md` file onto the window to open it (matched against the served folder by name, then size and mtime).
+
+**Header**
+
+- **Copy** the raw Markdown (📄) or the absolute path (📁).
+- **Save as PDF** (🖨) — opens the print dialog (the PDF title is set to the file name).
+- **Theme** (🖥️) — cycles system → light → dark; remembered, default follows the OS.
+- **Wrap** — toggles text wrapping for code and plain-text views.
+
+**Design**
+
+- **Scoped by design** — serves exactly the folder you launch it with and cannot be re-pointed from the UI or a URL; access is confined to that tree, with a realpath check that rejects escaping symlinks.
+- **Zero runtime dependencies** — the client bundle is prebuilt, so `npx` just works.
 
 ## Usage
 
@@ -81,6 +96,7 @@ Options and the optional `[dir]` may appear in any order.
 | `--open` / `--no-open` | Open the browser automatically (default on). |
 | `--all` | List all files, not only markdown. |
 | `--fade <dur>` | How long the "recently changed" tint lasts (default `5m`; e.g. `60s`, `5m`; `0` or `--no-fade` disables). |
+| `-v, --version` | Show the version. |
 | `-h, --help` | Show help. |
 
 Long options accept both `--port 8200` and `--port=8200`.
