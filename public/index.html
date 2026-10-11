@@ -219,6 +219,76 @@
         border: 1px solid var(--border);
         border-radius: 0.4rem;
       }
+      /* Click-to-enlarge overlay — only for images that were scaled down. */
+      #content img.zoomable {
+        cursor: zoom-in;
+      }
+      #lightbox {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        overflow: auto;
+        background: rgba(0, 0, 0, 0.82);
+      }
+      #lightbox img {
+        margin: auto;
+        max-width: none;
+        max-height: none;
+        box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.5);
+      }
+      #lightboxClose {
+        position: fixed;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 2.25rem;
+        height: 2.25rem;
+        border: none;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.85);
+        color: #111;
+        font-size: 1rem;
+        cursor: pointer;
+      }
+      /* Card for files the viewer can't display (Office docs, archives, ...). */
+      #content .file-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 1.5rem 2rem;
+        border: 1px solid var(--border);
+        border-radius: 0.6rem;
+        background: var(--panel);
+        text-align: center;
+      }
+      #content .file-icon {
+        padding: 0.35rem 0.6rem;
+        border-radius: 0.4rem;
+        background: var(--accent-soft);
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+      }
+      #content .file-name {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      #content .file-meta {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      #content a.file-open {
+        margin-top: 0.25rem;
+        padding: 0.35rem 0.8rem;
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+        text-decoration: none;
+        color: inherit;
+      }
+      #content a.file-open:hover {
+        background: var(--accent-soft);
+      }
       #content table {
         border-collapse: collapse;
         width: fit-content;
@@ -738,6 +808,10 @@
       </div>
     </main>
     <div id="toast"></div>
+    <div id="lightbox" hidden>
+      <button id="lightboxClose" type="button" title="Close (Esc)" aria-label="Close">✕</button>
+      <img id="lightboxImg" alt="" />
+    </div>
     <div id="dropOverlay" hidden>
       <div class="drop-card">Drop a markdown file to open</div>
     </div>

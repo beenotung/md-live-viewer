@@ -59,6 +59,37 @@ const CONTENT_TYPES: Record<string, string> = {
  *  media is served through `/raw` instead of being slurped into memory. */
 const MAX_TEXT_FILE_BYTES = 25 * 1024 * 1024
 
+/**
+ * Heuristic for "not text": a NUL byte, or a high share of control bytes —
+ * both common in binary formats but not in text. Bytes >= 0x80 are treated as
+ * text, so Latin-1 / UTF-8 documents are not misread.
+ */
+function isBinary(buffer: Buffer): boolean {
+  let sample = buffer.subarray(0, 8192)
+  if (sample.length === 0) return false
+  let control = 0
+  for (let byte of sample) {
+    if (byte === 0) return true
+    if (byte < 9 || (byte > 13 && byte < 32)) control++
+  }
+  return control / sample.length > 0.1
+}
+
+/** Lower-case extension without the dot, or '' when there is none. */
+function fileExtension(filePath: string): string {
+  let slash = filePath.lastIndexOf('/')
+  let dot = filePath.lastIndexOf('.')
+  return dot > slash ? filePath.slice(dot + 1).toLowerCase() : ''
+}
+
+/** Document/archive/binary types we never read as text — shown as a card. */
+const UNPREVIEWABLE_EXTENSIONS = new Set([
+  'pptx', 'ppt', 'ppsx', 'pps', 'docx', 'doc', 'xlsx', 'xls', 'odt', 'ods', 'odp',
+  'pages', 'numbers', 'key', 'zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz',
+  'exe', 'dll', 'so', 'dylib', 'bin', 'dmg', 'iso', 'apk', 'jar', 'class',
+  'woff', 'woff2', 'ttf', 'otf', 'eot', 'psd', 'ai', 'db', 'sqlite',
+])
+
 export type CliOptions = {
   root: string
   host: string
@@ -280,16 +311,24 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       try {
         let absolute = resolveWithinRoot(root, relative)
         let stats = fs.statSync(absolute)
-        if (stats.size > MAX_TEXT_FILE_BYTES) {
-          sendJson(response, 413, {
-            error: `File is too large to open as text (${Math.round(stats.size / 1048576)} MB)`,
-          })
+        if (UNPREVIEWABLE_EXTENSIONS.has(fileExtension(relative))) {
+          // Known document/archive/binary types: card them without reading.
+          sendJson(response, 415, { error: 'Not supported', size: stats.size })
           return
         }
-        let content = fs.readFileSync(absolute, 'utf8')
+        if (stats.size > MAX_TEXT_FILE_BYTES) {
+          sendJson(response, 413, { error: 'Too large to show as text', size: stats.size })
+          return
+        }
+        let buffer = fs.readFileSync(absolute)
+        if (isBinary(buffer)) {
+          // Binary (zip/office/executable): the client shows a "not supported" card.
+          sendJson(response, 415, { error: 'Not supported', size: stats.size })
+          return
+        }
         sendJson(response, 200, {
           path: relative,
-          content,
+          content: buffer.toString('utf8'),
         })
       } catch (error) {
         let statusCode = (error as { statusCode?: number }).statusCode ?? 404
