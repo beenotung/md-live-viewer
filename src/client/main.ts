@@ -600,6 +600,44 @@ function rawUrl(relativePath: string): string {
   return '/raw/' + relativePath.split('/').map(encodeURIComponent).join('/')
 }
 
+/** Lower-case extension without the dot, or '' when there is none. */
+function fileExtension(filePath: string): string {
+  let slash = filePath.lastIndexOf('/')
+  let dot = filePath.lastIndexOf('.')
+  return dot > slash ? filePath.slice(dot + 1).toLowerCase() : ''
+}
+
+/** Bundled Prism languages, keyed by file extension. */
+const CODE_LANGUAGES: Record<string, string> = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'jsx',
+  ts: 'typescript', tsx: 'tsx',
+  json: 'json', jsonc: 'json',
+  yml: 'yaml', yaml: 'yaml',
+  sh: 'bash', bash: 'bash', zsh: 'bash',
+  py: 'python',
+  go: 'go', rs: 'rust',
+  css: 'css',
+  html: 'markup', htm: 'markup', xml: 'markup',
+  sql: 'sql',
+}
+
+/**
+ * Render a non-Markdown text file verbatim — no Markdown interpretation — so
+ * `.py`/`.json`/config files are not mangled into headings and emphasis.
+ */
+function renderPlainText(filePath: string, text: string) {
+  let language = CODE_LANGUAGES[fileExtension(filePath)]
+  let pre = document.createElement('pre')
+  pre.className = 'plain-text'
+  let code = document.createElement('code')
+  if (language) code.className = `language-${language}`
+  code.textContent = text
+  pre.append(code)
+  content.replaceChildren(pre)
+  if (language) highlightCodeBlocks(content)
+  addCodeCopyButtons(content)
+}
+
 /** Show a non-Markdown file directly (never through the Markdown renderer). */
 function renderMedia(kind: MediaKind, relativePath: string) {
   let src = rawUrl(relativePath)
@@ -816,7 +854,11 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
     currentRaw = data.content
     copyRawBtn.disabled = false
     if (!options.silent) content.scrollTop = 0
-    await renderMarkdown(data.content, { trackChanges: options.silent === true })
+    if (isMarkdownPath(data.path)) {
+      await renderMarkdown(data.content, { trackChanges: options.silent === true })
+    } else {
+      renderPlainText(data.path, data.content)
+    }
   } catch (error) {
     showToast(`Failed to open ${relativePath}: ${(error as Error).message}`)
     if (!currentFilePath) updateEmptyState()
