@@ -574,28 +574,114 @@ function updateUrlHash() {
 }
 
 // ---------------------------------------------------------------------------
+// Non-Markdown files (images, audio, video, PDF)
+// ---------------------------------------------------------------------------
+
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg'])
+const AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'opus', 'flac'])
+const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'webm', 'ogv', 'mov'])
+type MediaKind = 'image' | 'audio' | 'video' | 'pdf'
+
+/** Which built-in viewer fits `filePath`, or null for Markdown / plain text. */
+function mediaKind(filePath: string): MediaKind | null {
+  let slash = filePath.lastIndexOf('/')
+  let dot = filePath.lastIndexOf('.')
+  if (dot <= slash) return null
+  let ext = filePath.slice(dot + 1).toLowerCase()
+  if (IMAGE_EXTENSIONS.has(ext)) return 'image'
+  if (AUDIO_EXTENSIONS.has(ext)) return 'audio'
+  if (VIDEO_EXTENSIONS.has(ext)) return 'video'
+  if (ext === 'pdf') return 'pdf'
+  return null
+}
+
+/** URL that serves `relativePath` raw, with each segment percent-encoded. */
+function rawUrl(relativePath: string): string {
+  return '/raw/' + relativePath.split('/').map(encodeURIComponent).join('/')
+}
+
+/** Show a non-Markdown file directly (never through the Markdown renderer). */
+function renderMedia(kind: MediaKind, relativePath: string) {
+  let src = rawUrl(relativePath)
+  let name = relativePath.slice(relativePath.lastIndexOf('/') + 1)
+  let wrap = document.createElement('div')
+
+  if (kind === 'image') {
+    wrap.className = 'media-view'
+    let img = document.createElement('img')
+    img.src = src
+    img.alt = name
+    wrap.append(img)
+  } else if (kind === 'audio' || kind === 'video') {
+    wrap.className = 'media-view'
+    let card = document.createElement('div')
+    card.className = 'media-card'
+    let label = document.createElement('div')
+    label.className = 'media-name'
+    label.textContent = name
+    let media: HTMLMediaElement =
+      kind === 'audio' ? document.createElement('audio') : document.createElement('video')
+    media.controls = true
+    media.src = src
+    card.append(label, media)
+    wrap.append(card)
+  } else {
+    let frame = document.createElement('iframe')
+    frame.className = 'media-frame'
+    frame.src = src
+    frame.title = name
+    wrap.append(frame)
+  }
+
+  content.replaceChildren(wrap)
+}
+
+/** Point the UI at `path` (title, hash, recents, buttons) without rendering. */
+function setCurrentFilePath(path: string) {
+  currentFilePath = path
+  currentPath.textContent = path
+  document.title = `${path} - md-live-viewer`
+  localStorage.setItem('md-live-viewer:last', path)
+  rememberFile(path)
+  updateUrlHash()
+  copyPathBtn.disabled = false
+  printBtn.disabled = false
+  copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? path}`
+}
+
+// ---------------------------------------------------------------------------
 // Loading files
 // ---------------------------------------------------------------------------
 
 async function loadFile(relativePath: string, options: { silent?: boolean } = {}) {
   try {
+    let kind = mediaKind(relativePath)
+    if (kind) {
+      // Media is displayed straight from /raw; only stat it first so its bytes
+      // are never read as text.
+      let stat = await fetch(`/api/stat?path=${encodeURIComponent(relativePath)}`)
+      if (!stat.ok) {
+        let body = await stat.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${stat.status}`)
+      }
+      setCurrentFilePath(relativePath)
+      currentRaw = ''
+      copyRawBtn.disabled = true
+      if (kind === 'audio' || kind === 'video') printBtn.disabled = true
+      if (!options.silent) content.scrollTop = 0
+      renderMedia(kind, relativePath)
+      return
+    }
+
     let response = await fetch(`/api/file?path=${encodeURIComponent(relativePath)}`)
     if (!response.ok) {
       let body = await response.json().catch(() => ({}))
       throw new Error(body.error ?? `HTTP ${response.status}`)
     }
     let data = (await response.json()) as { path: string; content: string }
-    currentFilePath = data.path
+    setCurrentFilePath(data.path)
     currentRaw = data.content
-    currentPath.textContent = data.path
-    document.title = `${data.path} - md-live-viewer`
-    localStorage.setItem('md-live-viewer:last', data.path)
-    rememberFile(data.path)
-    updateUrlHash()
-    copyPathBtn.disabled = false
     copyRawBtn.disabled = false
-    printBtn.disabled = false
-    copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? data.path}`
     if (!options.silent) content.scrollTop = 0
     await renderMarkdown(data.content, { trackChanges: options.silent === true })
   } catch (error) {

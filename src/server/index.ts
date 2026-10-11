@@ -20,13 +20,44 @@ const CONTENT_TYPES: Record<string, string> = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.log': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.markdown': 'text/markdown; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.mov': 'video/quicktime',
+  '.pdf': 'application/pdf',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
-  '.map': 'application/json; charset=utf-8',
 }
+
+/** Files larger than this are not read as text (`/api/file` returns 413);
+ *  media is served through `/raw` instead of being slurped into memory. */
+const MAX_TEXT_FILE_BYTES = 25 * 1024 * 1024
 
 export type CliOptions = {
   root: string
@@ -248,6 +279,13 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       let relative = url.searchParams.get('path') ?? ''
       try {
         let absolute = resolveWithinRoot(root, relative)
+        let stats = fs.statSync(absolute)
+        if (stats.size > MAX_TEXT_FILE_BYTES) {
+          sendJson(response, 413, {
+            error: `File is too large to open as text (${Math.round(stats.size / 1048576)} MB)`,
+          })
+          return
+        }
         let content = fs.readFileSync(absolute, 'utf8')
         sendJson(response, 200, {
           path: relative,
