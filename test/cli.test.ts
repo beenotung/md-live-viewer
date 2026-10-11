@@ -31,8 +31,9 @@ test('parseArgs accepts --key=value for long options', () => {
 })
 
 test('parseArgs reports help via a negative port', () => {
-  let options = parseArgs(['--help'], '/work')
-  assert.equal(options.port, -1)
+  assert.equal(parseArgs(['--help'], '/work').port, -1)
+  assert.equal(parseArgs(['--version'], '/work').port, -2)
+  assert.equal(parseArgs(['-v'], '/work').port, -2)
 })
 
 test('parseArgs rejects an invalid port and unknown flags', () => {

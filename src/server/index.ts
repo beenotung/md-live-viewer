@@ -166,6 +166,8 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
       options.fadeMs = parseDuration(takeValue())
     } else if (arg === '--no-fade') {
       options.fadeMs = 0
+    } else if (arg === '--version' || arg === '-v') {
+      options.port = -2
     } else if (arg === '--help' || arg === '-h') {
       options.port = -1
     } else if (arg.startsWith('-')) {
@@ -181,7 +183,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
   return options
 }
 
-const HELP = `md-live-viewer - live-updating markdown viewer
+const HELP = `md-live-viewer v${PACKAGE_VERSION} - live-updating markdown viewer
 
 Usage:
   npx md-live-viewer [options] [dir]
@@ -195,12 +197,16 @@ Options:
       --no-open    Do not open the browser
       --all        List all files, not only markdown
       --fade <d>   How long "recently changed" stays tinted (default 5m;
-                   e.g. 60s, 5m; 0 or --no-fade disables)
+                   e.g. 60s, 5m)
+      --no-fade    Turn the "recently changed" tint off
+  -v, --version    Show the version
   -h, --help       Show this help
 
 Examples:
   npx md-live-viewer                 # serve the current directory
   npx md-live-viewer ~/notes --open  # serve a specific folder
+
+Installed commands (equivalent): md-view, md-viewer, md-live-viewer.
 `
 
 function sendJson(response: http.ServerResponse, status: number, body: unknown) {
@@ -237,7 +243,18 @@ function serveStatic(response: http.ServerResponse, relativePath: string) {
 }
 
 export async function start(argv = process.argv.slice(2)): Promise<void> {
-  let options = parseArgs(argv)
+  let options: CliOptions
+  try {
+    options = parseArgs(argv)
+  } catch (error) {
+    process.stderr.write(`${(error as Error).message}\nRun with --help for usage.\n`)
+    process.exitCode = 1
+    return
+  }
+  if (options.port === -2) {
+    process.stdout.write(`md-live-viewer v${PACKAGE_VERSION}\n`)
+    return
+  }
   if (options.port === -1) {
     process.stdout.write(HELP)
     return
