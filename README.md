@@ -47,7 +47,7 @@ Cursor's markdown preview does not always pick up changes written by an external
   - A **view toggle** (top-right of the palette) switches between the flat searchable **List** (default) and a **Tree** of the folder structure. Tree mode auto-opens at the folder of the current file and highlights its siblings, so nearby files are quick to find. Click a folder to expand/collapse; typing still does a flat search. The choice is remembered.
   - **Hover**, `↑`/`↓`, and scrolling all move the same selection (the one `Enter` opens), so keyboard and mouse stay in sync.
   - Each row has a **⧉** button (copy the absolute path without opening); rows under **Recent** also have a **✕** to drop them from the list.
-- **Bookmarkable, shareable links** — the open file is kept in the URL hash (`#file=path/to/file.md`), so you can bookmark it, copy the address, or open it in another browser. The 🔗 button copies the full link; the 📋 button copies the absolute filesystem path. Slashes stay literal (`/`) so links stay readable; `%2F` links still work.
+- **Bookmarkable, shareable links** — the open file is kept in the URL hash (`#file=path/to/file.md`), so you can bookmark it, copy the address, or open it in another browser. The 📁 button copies the absolute filesystem path. Slashes stay literal (`/`) so links stay readable; `%2F` links still work.
 - **Scoped by design** — the server serves exactly the folder you launch it with (the argument, defaulting to the current directory) and **cannot be re-pointed from the UI or a URL**. File access is further confined to that tree, including a realpath check that rejects symlinks pointing outside it.
 - **In-preview navigation** — links to other markdown files open inside the viewer; images and other files are served through it too.
 - **Drag & drop** — drop a `.md` file onto the window to open it (an overlay appears while dragging). Browsers hide a dropped file's path, so it's matched by name against the served folder; when several files share the name, **size and mtime** (`File.lastModified`) pick the right one. A unique match opens the real (live-watched) file; otherwise it's shown as a static, read-only preview, or the palette opens to choose.
@@ -58,8 +58,7 @@ Cursor's markdown preview does not always pick up changes written by an external
 - **Relative images/links** — resolved against the markdown file's folder and served through the viewer.
 - **Light / dark theme** — click the theme button in the header to cycle **system → light → dark**. The choice is remembered per browser; the default follows your OS setting.
 - **Copy the raw Markdown** — click the 📄 button to copy the open file's source.
-- **Copy the absolute path** — click the 📋 button to copy the open file's full path to the clipboard (handy for pasting into a terminal or another tool).
-- **Copy the link** — click the 🔗 button to copy a URL that reopens the same file (works across browsers).
+- **Copy the absolute path** — click the 📁 button to copy the open file's full path to the clipboard (handy for pasting into a terminal or another tool).
 - **Save as PDF** — click the 🖨 button to open the browser's print dialog and save the rendered page as a PDF (no app chrome, and the PDF's metadata title is set to the file name).
 - Zero runtime dependencies on the server; the client bundle is prebuilt, so `npx` just works.
 
