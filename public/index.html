@@ -289,6 +289,11 @@
       #content a.file-open:hover {
         background: var(--accent-soft);
       }
+      /* Non-Markdown text/code files are shown verbatim, not parsed. */
+      #content pre.plain-text {
+        white-space: pre;
+        tab-size: 2;
+      }
       #content table {
         border-collapse: collapse;
         width: fit-content;
