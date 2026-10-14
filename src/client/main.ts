@@ -1773,7 +1773,12 @@ async function boot() {
   let last = localStorage.getItem('md-live-viewer:last')
   let initial = requested ?? (last && allFiles.includes(last) ? last : null)
   if (!initial && allFiles.length > 0) {
-    initial = allFiles.find(file => /readme\.md$/i.test(file)) ?? null
+    // Prefer a README; otherwise, if the folder has a single Markdown file,
+    // open it (whatever its name) instead of showing the empty state.
+    let markdown = allFiles.filter(isMarkdownPath)
+    initial =
+      markdown.find(file => /readme\.md$/i.test(file)) ??
+      (markdown.length === 1 ? markdown[0] : null)
   }
 
   if (initial) {
