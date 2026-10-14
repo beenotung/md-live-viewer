@@ -1165,30 +1165,37 @@ async function runPaletteSearch() {
   }
 }
 
-async function openPalette() {
-  if (allFiles.length === 0) {
-    try {
-      let response = await fetch('/api/files')
-      let data = (await response.json()) as { files: string[] }
-      allFiles = data.files
-    } catch {
-      showToast('Could not load file list')
-    }
-  }
+let paletteListToken = 0
+
+function openPalette() {
   paletteInput.value = ''
   palette.showModal()
   paletteInput.focus()
-  // Empty query: use the full file list so recents/tree are complete.
-  paletteSource = allFiles.length > 0 ? allFiles : paletteSource
   paletteActiveIndex = 0
-  if (paletteMode === 'tree') {
-    if (currentFilePath) expandPathTo(currentFilePath)
-    renderTree()
-    paletteEmpty.hidden = paletteResults.length > 0
-    setActiveIndex(paletteActiveIndex)
-    return
+  // Show the cached list immediately (recents/tree complete) so the picker
+  // opens instantly...
+  paletteSource = allFiles.length > 0 ? allFiles : paletteSource
+  if (paletteMode === 'tree' && currentFilePath) expandPathTo(currentFilePath)
+  renderPalette()
+  // ...then refresh it in the background. A query the user has started typing
+  // is left alone — the fresh list is used only for the unfiltered view.
+  void refreshPaletteFiles()
+}
+
+/** Re-fetch the served file list; update the open picker when it is still
+ *  showing the unfiltered list, so new files appear without a page reload. */
+async function refreshPaletteFiles() {
+  let token = ++paletteListToken
+  try {
+    let files = await fetchFiles()
+    if (token !== paletteListToken) return
+    allFiles = files
+    if (!palette.open || paletteInput.value.trim() !== '') return
+    paletteSource = allFiles.length > 0 ? allFiles : paletteSource
+    renderPalette()
+  } catch {
+    if (allFiles.length === 0) showToast('Could not load file list')
   }
-  renderPaletteList()
 }
 
 function selectPaletteIndex(index: number) {
