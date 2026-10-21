@@ -4,6 +4,11 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
+  brotliCompressSync,
+  constants as zlibConstants,
+  gzipSync,
+} from 'node:zlib'
+import {
   isMarkdownFile,
   listFiles,
   resolveWithinRoot,
@@ -11,8 +16,21 @@ import {
 } from './files.ts'
 import { FileWatcher } from './watch.ts'
 
-// dist/server.js lives one level below the package root.
-let packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+/**
+ * Nearest ancestor that holds a package.json: the folder with `public/` and the
+ * version. `dist/server.js` sits directly below it, while `src/server/index.ts`
+ * (the sources, run directly) sits two levels below — so walk instead of
+ * assuming a depth.
+ */
+function findPackageRoot(from: string): string {
+  for (let directory = from; ; directory = path.dirname(directory)) {
+    if (fs.existsSync(path.join(directory, 'package.json'))) return directory
+    // Filesystem root reached without a package.json: keep the old behaviour.
+    if (path.dirname(directory) === directory) return from
+  }
+}
+
+let packageRoot = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)))
 
 /** Version from the shipped package.json, for the startup banner. */
 const PACKAGE_VERSION = readPackageVersion()
@@ -218,7 +236,184 @@ function sendJson(response: http.ServerResponse, status: number, body: unknown) 
   response.end(payload)
 }
 
-function serveStatic(response: http.ServerResponse, relativePath: string) {
+type ContentEncoding = 'br' | 'gzip'
+
+/** Brotli is both smaller and, at this quality, cheaper than gzip here. */
+const BROTLI_QUALITY = 9
+const GZIP_LEVEL = 9
+/** Below this, compression headers cost more than they save. */
+const MIN_COMPRESS_BYTES = 1024
+/** Above this, the one-off CPU cost is no longer worth caching. */
+const MAX_COMPRESS_BYTES = 8 * 1024 * 1024
+/** Memory budget for the compressed cache, evicting the oldest variants. */
+const MAX_COMPRESS_CACHE_BYTES = 16 * 1024 * 1024
+
+type CompressedEntry = {
+  /** `${size}-${mtimeMs}`; a rebuilt file is recompressed on the next request. */
+  version: string
+  body: Buffer
+}
+
+/** Compressed bodies, keyed by `${encoding}:${absolutePath}`. */
+const compressedCache = new Map<string, CompressedEntry>()
+let compressedCacheBytes = 0
+
+/** Types worth compressing; already-compressed media (png, woff2, mp4) is not. */
+function isCompressible(contentType: string): boolean {
+  let mime = contentType.split(';')[0].trim().toLowerCase()
+  return (
+    mime.startsWith('text/') ||
+    mime === 'application/javascript' ||
+    mime === 'application/json' ||
+    mime === 'application/xml' ||
+    mime === 'image/svg+xml'
+  )
+}
+
+/**
+ * Best encoding the client accepts, preferring brotli. Safari only offers `br`
+ * over HTTPS, so plain-HTTP clients fall back to gzip rather than to nothing.
+ */
+export function negotiateEncoding(
+  header: string | string[] | undefined,
+): ContentEncoding | null {
+  if (!header) return null
+  let value = Array.isArray(header) ? header.join(',') : header
+  let accepted = new Map<string, number>()
+  for (let part of value.split(',')) {
+    let [name, ...params] = part
+      .trim()
+      .toLowerCase()
+      .split(';')
+      .map(piece => piece.trim())
+    if (!name) continue
+    let quality = 1
+    for (let param of params) {
+      let match = /^\s*q\s*=\s*([\d.]+)\s*$/.exec(param)
+      if (match) quality = Number(match[1])
+    }
+    // Keep the first entry per name; an explicit `br;q=0` must beat `*`.
+    if (!accepted.has(name)) accepted.set(name, quality)
+  }
+  let wildcard = accepted.get('*') ?? 0
+  if ((accepted.get('br') ?? wildcard) > 0) return 'br'
+  if ((accepted.get('gzip') ?? wildcard) > 0) return 'gzip'
+  return null
+}
+
+/**
+ * Compress on first request and cache, rather than shipping `.br`/`.gz` files:
+ * one build artifact stays the source of truth (so `--watch` rebuilds can't
+ * serve a stale variant) and the npm tarball does not grow by ~800 KB.
+ */
+function getCompressedBody(
+  filePath: string,
+  version: string,
+  encoding: ContentEncoding,
+): Buffer | null {
+  let cacheKey = `${encoding}:${filePath}`
+  let cached = compressedCache.get(cacheKey)
+  if (cached) {
+    if (cached.version === version) {
+      // Re-insert to refresh the eviction order (Map keeps insertion order).
+      compressedCache.delete(cacheKey)
+      compressedCache.set(cacheKey, cached)
+      return cached.body
+    }
+    compressedCache.delete(cacheKey)
+    compressedCacheBytes -= cached.body.length
+  }
+
+  let body: Buffer
+  try {
+    let source = fs.readFileSync(filePath)
+    body =
+      encoding === 'br'
+        ? brotliCompressSync(source, {
+            params: { [zlibConstants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY },
+          })
+        : gzipSync(source, { level: GZIP_LEVEL })
+  } catch {
+    return null // Unreadable now (deleted mid-flight): fall back to the file.
+  }
+
+  compressedCache.set(cacheKey, { version, body })
+  compressedCacheBytes += body.length
+  for (let [key, entry] of compressedCache) {
+    if (compressedCacheBytes <= MAX_COMPRESS_CACHE_BYTES || key === cacheKey) break
+    compressedCache.delete(key)
+    compressedCacheBytes -= entry.body.length
+  }
+  return body
+}
+
+/** Weak validator from size + mtime, so a touched file gets a fresh ETag. */
+function fileVersion(stats: fs.Stats): string {
+  return `${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}`
+}
+
+function matchesETag(header: string | string[] | undefined, etag: string): boolean {
+  if (!header) return false
+  let value = Array.isArray(header) ? header.join(',') : header
+  return value
+    .split(',')
+    .some(item => item.trim().replace(/^W\//i, '') === etag)
+}
+
+/** Serve a file from disk, compressed when the client can take it. */
+function sendFile(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  filePath: string,
+  stats: fs.Stats,
+) {
+  let contentType =
+    CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+  let version = fileVersion(stats)
+  let compressible =
+    stats.size >= MIN_COMPRESS_BYTES &&
+    stats.size <= MAX_COMPRESS_BYTES &&
+    isCompressible(contentType)
+  let encoding = compressible
+    ? negotiateEncoding(request.headers['accept-encoding'])
+    : null
+  let body = encoding ? getCompressedBody(filePath, version, encoding) : null
+  if (!body) encoding = null
+
+  // The encoding is part of the validator: `br` and identity must not share.
+  let etag = `"${version}${encoding ? `-${encoding}` : ''}"`
+  let headers: http.OutgoingHttpHeaders = {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-cache',
+    ETag: etag,
+  }
+  if (compressible) headers['Vary'] = 'Accept-Encoding'
+
+  if (matchesETag(request.headers['if-none-match'], etag)) {
+    // No body on a 304, and no Content-Length/Content-Encoding with it.
+    response.writeHead(304, headers)
+    response.end()
+    return
+  }
+
+  if (body && encoding) {
+    headers['Content-Encoding'] = encoding
+    headers['Content-Length'] = body.length
+    response.writeHead(200, headers)
+    response.end(body)
+    return
+  }
+
+  headers['Content-Length'] = stats.size
+  response.writeHead(200, headers)
+  fs.createReadStream(filePath).pipe(response)
+}
+
+function serveStatic(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  relativePath: string,
+) {
   let publicDir = path.join(packageRoot, 'public')
   let filePath = resolveWithinRoot(publicDir, relativePath)
   let stats: fs.Stats
@@ -233,13 +428,7 @@ function serveStatic(response: http.ServerResponse, relativePath: string) {
     response.end('Not found')
     return
   }
-  let extension = path.extname(filePath).toLowerCase()
-  response.writeHead(200, {
-    'Content-Type': CONTENT_TYPES[extension] ?? 'application/octet-stream',
-    'Content-Length': stats.size,
-    'Cache-Control': 'no-cache',
-  })
-  fs.createReadStream(filePath).pipe(response)
+  sendFile(request, response, filePath, stats)
 }
 
 export async function start(argv = process.argv.slice(2)): Promise<void> {
@@ -372,13 +561,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       try {
         let absolute = resolveWithinRoot(root, relative)
         let stats = fs.statSync(absolute)
-        let extension = path.extname(absolute).toLowerCase()
-        response.writeHead(200, {
-          'Content-Type': CONTENT_TYPES[extension] ?? 'application/octet-stream',
-          'Content-Length': stats.size,
-          'Cache-Control': 'no-cache',
-        })
-        fs.createReadStream(absolute).pipe(response)
+        sendFile(request, response, absolute, stats)
       } catch {
         response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
         response.end('Not found')
@@ -406,7 +589,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     }
 
     let relative = url.pathname === '/' ? '/index.html' : url.pathname
-    serveStatic(response, decodeURIComponent(relative))
+    serveStatic(request, response, decodeURIComponent(relative))
   })
 
   watcher.start()
