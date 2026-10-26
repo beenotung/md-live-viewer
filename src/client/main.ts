@@ -1071,7 +1071,7 @@ function renderPaletteList() {
     }
     item.appendChild(copyBtn)
 
-    item.onclick = () => selectPaletteIndex(index)
+    wirePaletteRow(item, file, index)
     // Hovering moves the active selection too (like an editor quick-open).
     item.addEventListener('mouseenter', () => setActiveIndex(index))
     paletteList.appendChild(item)
@@ -1205,6 +1205,26 @@ function selectPaletteIndex(index: number) {
   loadFile(file)
 }
 
+/** Make a palette row behave like a link: a plain click opens it in the
+ *  viewer, while Ctrl/Cmd-click and middle-click open it in a new tab. */
+function wirePaletteRow(item: HTMLElement, file: string, index: number) {
+  let url = `${location.origin}${location.pathname}#file=${encodePathForHash(file)}`
+  let openInNewTab = (event: MouseEvent) => {
+    event.preventDefault()
+    window.open(url, '_blank', 'noopener')
+  }
+  item.addEventListener('click', event => {
+    if (event.ctrlKey || event.metaKey) {
+      openInNewTab(event)
+      return
+    }
+    selectPaletteIndex(index)
+  })
+  item.addEventListener('auxclick', event => {
+    if (event.button === 1) openInNewTab(event)
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Palette view mode: flat searchable list (default) or folder tree
 // ---------------------------------------------------------------------------
@@ -1319,7 +1339,7 @@ function renderTree() {
       item.appendChild(arrow)
       item.appendChild(document.createTextNode(child.name))
       item.dataset.index = String(index)
-      item.onclick = () => selectPaletteIndex(index)
+      wirePaletteRow(item, child.path, index)
       item.addEventListener('mouseenter', () => setActiveIndex(index))
       paletteList.appendChild(item)
       paletteItems.push(item)
