@@ -568,10 +568,12 @@ function readStateFromHash(): HashState {
   return { file }
 }
 
-function updateUrlHash() {
+function updateUrlHash(mode: 'push' | 'replace' = 'replace') {
   let next = currentFilePath ? `#file=${encodePathForHash(currentFilePath)}` : ''
   if (location.hash === next) return
-  history.replaceState(null, '', next || location.pathname + location.search)
+  let url = next || location.pathname + location.search
+  if (mode === 'push') history.pushState(null, '', url)
+  else history.replaceState(null, '', url)
 }
 
 // ---------------------------------------------------------------------------
@@ -676,13 +678,13 @@ function renderMedia(kind: MediaKind, relativePath: string) {
 }
 
 /** Point the UI at `path` (title, hash, recents, buttons) without rendering. */
-function setCurrentFilePath(path: string) {
+function setCurrentFilePath(path: string, historyMode: 'push' | 'replace' = 'push') {
   currentFilePath = path
   currentPath.textContent = path
   document.title = `${path} - md-live-viewer`
   localStorage.setItem('md-live-viewer:last', path)
   rememberFile(path)
-  updateUrlHash()
+  updateUrlHash(historyMode)
   copyPathBtn.disabled = false
   printBtn.disabled = false
   copyPathBtn.title = `Copy path: ${currentAbsolutePath() ?? path}`
@@ -750,8 +752,12 @@ function renderUnsupported(relativePath: string, size?: number) {
 }
 
 /** Point the UI at a file the viewer can't display, then show the card. */
-function showUnsupported(relativePath: string, size?: number) {
-  setCurrentFilePath(relativePath)
+function showUnsupported(
+  relativePath: string,
+  size?: number,
+  historyMode: 'push' | 'replace' = 'push',
+) {
+  setCurrentFilePath(relativePath, historyMode)
   currentRaw = ''
   copyRawBtn.disabled = true
   printBtn.disabled = true
@@ -820,7 +826,11 @@ document.addEventListener('keydown', event => {
 // Loading files
 // ---------------------------------------------------------------------------
 
-async function loadFile(relativePath: string, options: { silent?: boolean } = {}) {
+type LoadOptions = { silent?: boolean; history?: 'push' | 'replace' }
+
+async function loadFile(relativePath: string, options: LoadOptions = {}) {
+  let historyMode: 'push' | 'replace' =
+    options.silent || options.history === 'replace' ? 'replace' : 'push'
   try {
     let kind = mediaKind(relativePath)
     if (kind) {
@@ -831,7 +841,7 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
         let body = await stat.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${stat.status}`)
       }
-      setCurrentFilePath(relativePath)
+      setCurrentFilePath(relativePath, historyMode)
       currentRaw = ''
       copyRawBtn.disabled = true
       if (kind === 'audio' || kind === 'video') printBtn.disabled = true
@@ -843,7 +853,11 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
     let response = await fetch(`/api/file?path=${encodeURIComponent(relativePath)}`)
     if (response.status === 413 || response.status === 415) {
       let body = await response.json().catch(() => ({}))
-      showUnsupported(relativePath, typeof body.size === 'number' ? body.size : undefined)
+      showUnsupported(
+        relativePath,
+        typeof body.size === 'number' ? body.size : undefined,
+        historyMode,
+      )
       return
     }
     if (!response.ok) {
@@ -851,7 +865,7 @@ async function loadFile(relativePath: string, options: { silent?: boolean } = {}
       throw new Error(body.error ?? `HTTP ${response.status}`)
     }
     let data = (await response.json()) as { path: string; content: string }
-    setCurrentFilePath(data.path)
+    setCurrentFilePath(data.path, historyMode)
     currentRaw = data.content
     copyRawBtn.disabled = false
     if (!options.silent) content.scrollTop = 0
@@ -1773,7 +1787,7 @@ async function openDroppedFile(file: File) {
   copyPathBtn.disabled = true
   copyRawBtn.disabled = false
   printBtn.disabled = false
-  updateUrlHash()
+  updateUrlHash('push')
   await renderMarkdown(text, { trackChanges: false })
   showToast('Preview only — not in the served folder')
 }
@@ -1802,16 +1816,36 @@ async function boot() {
   }
 
   if (initial) {
-    await loadFile(initial)
+    await loadFile(initial, { history: 'replace' })
   } else {
     updateEmptyState()
   }
 
-  // Follow hash changes (back/forward, or a pasted link in the same tab).
-  window.addEventListener('hashchange', () => {
+  // Follow in-page navigation: browser back/forward, a manual hash edit, or a
+  // pasted link in the same tab. These must not add another history entry.
+  let navigationTarget: string | null = null
+  let followUrl = () => {
     let path = readStateFromHash().file
-    if (path && path !== currentFilePath) loadFile(path)
-  })
+    if (path === currentFilePath || path === navigationTarget) return
+    if (!path) {
+      if (!currentFilePath) return
+      currentFilePath = null
+      currentRaw = ''
+      currentPath.textContent = ''
+      document.title = 'md-live-viewer'
+      copyPathBtn.disabled = true
+      copyRawBtn.disabled = true
+      printBtn.disabled = true
+      updateEmptyState()
+      return
+    }
+    navigationTarget = path
+    loadFile(path, { history: 'replace' }).finally(() => {
+      if (navigationTarget === path) navigationTarget = null
+    })
+  }
+  window.addEventListener('popstate', followUrl)
+  window.addEventListener('hashchange', followUrl)
 
   setupDropToOpen()
   connectEvents()
