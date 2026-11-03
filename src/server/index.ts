@@ -16,7 +16,12 @@ import {
   searchFiles,
 } from './files.ts'
 import { FileWatcher } from './watch.ts'
-import { findInstance, logInstance, scanInstances } from './instance.ts'
+import {
+  findInstance,
+  logInstance,
+  scanInstances,
+  type Instance,
+} from './instance.ts'
 
 /**
  * Nearest ancestor that holds a package.json: the folder with `public/` and the
@@ -170,6 +175,8 @@ export type CliOptions = {
   fadeMs: number
   /** Absolute path whose serving instance `--where` should report. */
   where: string | null
+  /** True when the port was passed explicitly (`-p` / `--port`). */
+  portExplicit: boolean
   flags: {
     show_version: boolean
     show_help: boolean
@@ -198,6 +205,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     includeAllFiles: false,
     fadeMs: 300000,
     where: null,
+    portExplicit: false,
     flags: {
       show_version: false,
       show_help: false,
@@ -225,6 +233,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
       if (!Number.isInteger(options.port) || options.port < 0) {
         throw new Error(`Invalid port: ${value}`)
       }
+      options.portExplicit = true
     } else if (arg === '--host' || arg === '-H') {
       options.host = takeValue()
     } else if (arg === '--open' || arg === '-o') {
@@ -267,12 +276,27 @@ function normalizePath(path: string): string {
   return path
 }
 
+/** A path argument is either a folder to serve or a file to open. */
+export function resolveTarget(target: string): {
+  root: string
+  file: string | null
+} {
+  let stats: fs.Stats
+  try {
+    stats = fs.statSync(target)
+  } catch {
+    throw new Error(`No such file or directory: ${target}`)
+  }
+  if (stats.isDirectory()) return { root: target, file: null }
+  return { root: path.dirname(target), file: target }
+}
+
 const HELP = `md-live-viewer v${PACKAGE_VERSION} - live-updating markdown viewer
 
 Usage:
-  npx md-live-viewer [options] [dir]
+  npx md-live-viewer [options] [path]
 
-Options and the optional [dir] may appear in any order.
+Options and the optional [path] may appear in any order.
 
 Options:
   -p, --port <n>   Port to listen on (default 8137, use 0 for a random port)
@@ -292,6 +316,7 @@ Options:
 Examples:
   npx md-live-viewer                 # serve the current directory
   npx md-live-viewer ~/notes --open  # serve a specific folder
+  npx md-live-viewer notes/todo.md   # open a file (reuse a viewer, else serve its folder)
 
 Installed commands (equivalent): md-view, md-viewer, md-live-viewer.
 `
@@ -509,13 +534,21 @@ function serveStatic(
   sendFile(request, response, filePath, stats)
 }
 
+/** Deep link into a viewer: `http://localhost:<port>/#file=<path relative to root>`. */
+export function deepLink(instance: Instance, file: string): string {
+  let relative = path.relative(instance.root, file).split(path.sep).join('/')
+  let url = new URL(`http://localhost:${instance.port}/`)
+  url.hash = 'file=' + relative
+  return url.toString()
+}
+
 export async function start(argv = process.argv.slice(2)): Promise<void> {
   let options: CliOptions
   try {
     options = parseArgs(argv)
   } catch (error) {
     process.stderr.write(
-      `${(error as Error).message}\nRun with --help for usage.\n`,
+      `Error: ${(error as Error).message}\nRun with --help for usage.\n`,
     )
     process.exitCode = 1
     return
@@ -537,17 +570,14 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       return
     }
     let relative = path.relative(match.root, options.where)
+    let url = deepLink(match, options.where)
     let lines = [
       'md-live-viewer instance matched.',
-      `port: ${match.port}`,
-      `root: ${match.root}`,
-      `relative: ${relative}`,
+      `  port: ${match.port}`,
+      `  root: ${match.root}`,
+      `  relative: ${relative}`,
+      `  url: ${url}`,
     ]
-    {
-      let url = new URL(`http://localhost:${match.port}`)
-      url.hash = 'file=' + relative.split(path.sep).join('/')
-      lines.push(`url: ${url}`)
-    }
     if (!existsSync(options.where)) {
       lines.push(`warning: target file does not exist.`)
     } else if (statSync(options.where).isDirectory()) {
@@ -558,16 +588,45 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   }
   if (options.flags.list_instances) {
     let instances = await scanInstances()
-    console.log(`total ${instances.length} instances:`)
-    for (let instance of instances) {
-      console.log(`port: ${instance.port} | root: ${instance.root}`)
+    let lines = [`md-live-viewer running instances:`]
+    if (instances.length === 0) {
+      lines[0] += ' (none)'
     }
+    for (let i = 0; i < instances.length; i++) {
+      let instance = instances[i]
+      lines.push(`${i + 1}. port: ${instance.port} | root: ${instance.root}`)
+    }
+    console.log(lines.join('\n'))
     return
   }
-  let root = options.root
-  let rootStats = fs.statSync(root)
-  if (!rootStats.isDirectory()) {
-    throw new Error(`Not a directory: ${root}`)
+  let target: { root: string; file: string | null }
+  try {
+    target = resolveTarget(options.root)
+  } catch (error) {
+    process.stderr.write(`Error: ${(error as Error).message}\n`)
+    process.exitCode = 1
+    return
+  }
+  let { root, file: openFile } = target
+  if (openFile) {
+    // A file: reuse a viewer whose root covers it, else serve its folder below.
+    let instance = findInstance(await scanInstances(), openFile)
+    if (instance) {
+      let relative = path.relative(instance.root, openFile)
+      let url = deepLink(instance, openFile)
+      let lines = [
+        'md-live-viewer instance reused.',
+        `  port: ${instance.port}`,
+        `  root: ${instance.root}`,
+        `  relative: ${relative}`,
+        `  url: ${url}`,
+      ]
+      console.log(lines.join('\n'))
+      if (options.open) {
+        openBrowser({ url })
+      }
+      return
+    }
   }
 
   let fileCache: { at: number; files: string[] } = { at: 0, files: [] }
@@ -724,16 +783,41 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   watcher.start()
   subscribeWatcher()
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(options.port, options.host, () => resolve())
-  })
+  let listen = (port: number) =>
+    new Promise<void>((resolve, reject) => {
+      let onError = (error: Error) => reject(error)
+      server.once('error', onError)
+      server.listen(port, options.host, () => {
+        server.off('error', onError)
+        resolve()
+      })
+    })
+  try {
+    await listen(options.port)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
+    // fallback to any available port when auto-serving a file.
+    if (openFile && !options.portExplicit) {
+      await listen(0)
+    } else {
+      unsubscribeWatcher()
+      watcher.close()
+      process.stderr.write(
+        `Error: Port ${options.port} is already in use.\nUse --port 0 or another port.\n`,
+      )
+      process.exitCode = 1
+      return
+    }
+  }
 
   let address = server.address()
   let port =
     typeof address === 'object' && address ? address.port : options.port
   let displayHost = options.host === '0.0.0.0' ? 'localhost' : options.host
   let url = `http://${displayHost}:${port}/`
+  let openUrl = openFile
+    ? deepLink({ status: 'running', port, root }, openFile)
+    : url
 
   let fadeLabel =
     options.fadeMs <= 0
@@ -741,16 +825,18 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       : options.fadeMs % 60000 === 0
         ? `${options.fadeMs / 60000}m`
         : `${Math.round(options.fadeMs / 1000)}s`
-  console.log(
-    `\n  md-live-viewer${PACKAGE_VERSION ? ` v${PACKAGE_VERSION}` : ''}`,
-  )
-  console.log(`  root: ${root}`)
-  console.log(`  url:  ${url}`)
-  console.log(`  watch mode: ${watcher.mode}`)
-  console.log(`  fade: ${fadeLabel} (--fade <dur>)\n`)
 
+  let lines = [
+    `md-live-viewer${PACKAGE_VERSION ? ` v${PACKAGE_VERSION}` : ''}`,
+    `  root: ${root}`,
+    `  url:  ${url}`,
+    openUrl !== url ? `  open: ${openUrl}` : '',
+    `  watch mode: ${watcher.mode}`,
+    `  fade: ${fadeLabel} (--fade <dur>)`,
+  ]
+  console.log(lines.join('\n'))
   if (options.open) {
-    openBrowser({ url, host: options.host, port })
+    openBrowser({ url: openUrl })
   }
 
   let shutdown = () => {
@@ -767,7 +853,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   logInstance({ status: 'running', port, root })
 }
 
-function openBrowser(options: { url: string; host: string; port: number }) {
+function openBrowser(options: { url: string }) {
   let command: string
   let args: string[]
   if (process.platform === 'darwin') {

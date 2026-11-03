@@ -1,6 +1,10 @@
 import { strict as assert } from 'node:assert'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
-import { parseArgs } from '../src/server/index.ts'
+import { deepLink, parseArgs, resolveTarget } from '../src/server/index.ts'
+import type { Instance } from '../src/server/instance.ts'
 
 test('parseArgs defaults to the given cwd', () => {
   let options = parseArgs([], '/work/notes')
@@ -36,6 +40,31 @@ test('parseArgs accepts short aliases for host, all, open and no-open', () => {
   assert.equal(parseArgs(['-o'], '/work').open, true)
   assert.equal(parseArgs(['-n'], '/work').open, false)
   assert.equal(parseArgs(['-h'], '/work').flags.show_help, true)
+})
+
+test('resolveTarget serves a folder or the parent of a file', () => {
+  let dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-view-target-'))
+  let file = path.join(dir, 'a.md')
+  fs.writeFileSync(file, '# a\n')
+  try {
+    assert.deepEqual(resolveTarget(dir), { root: dir, file: null })
+    assert.deepEqual(resolveTarget(file), { root: dir, file })
+    assert.throws(() => resolveTarget(path.join(dir, 'missing.md')))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('deepLink builds a file fragment', () => {
+  let instance: Instance = { status: 'running', port: 8100, root: '/work' }
+  assert.equal(
+    deepLink(instance, '/work/a/b.md'),
+    'http://localhost:8100/#file=a/b.md',
+  )
+  assert.equal(
+    deepLink(instance, '/work/a b.md'),
+    'http://localhost:8100/#file=a%20b.md',
+  )
 })
 
 test('parseArgs reports help, version and list via flags', () => {

@@ -81,16 +81,16 @@ Cursor's markdown preview does not always pick up changes written by an external
 ## Usage
 
 ```bash
-md-view [options] [dir]
+md-view [options] [path]
 ```
 
-Options and the optional `[dir]` may appear in any order.
+Options and the optional `[path]` may appear in any order.
 
 ### Options
 
 | Option | Description |
 | --- | --- |
-| `[dir]` | Folder to serve. Defaults to the current directory. |
+| `[path]` | Folder to serve, or a file to open (reusing a viewer that covers it, else serving its folder). Defaults to the current directory. |
 | `-p, --port <n>` | Port (default `8137`; use `0` for a random free port). |
 | `--host <h>` | Host to bind (default `localhost`). |
 | `-o, --open` / `-n, --no-open` | Open the browser automatically (default on). |
@@ -111,6 +111,9 @@ cd ~/workspace/github.com/me/project && md-view
 
 # serve your notes on a fixed port, without opening a browser
 md-view --port 8200 --no-open ~/notes
+
+# open one file: reuse a viewer that covers it, else serve its folder
+md-view ~/notes/todo.md
 ```
 
 > With `npm start`, put script flags after `--`: `npm start -- --port 8200` (without `--`, npm consumes `--port` as its own config).
