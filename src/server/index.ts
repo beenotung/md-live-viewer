@@ -225,13 +225,13 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
       if (!Number.isInteger(options.port) || options.port < 0) {
         throw new Error(`Invalid port: ${value}`)
       }
-    } else if (arg === '--host') {
+    } else if (arg === '--host' || arg === '-H') {
       options.host = takeValue()
-    } else if (arg === '--open') {
+    } else if (arg === '--open' || arg === '-o') {
       options.open = true
-    } else if (arg === '--no-open') {
+    } else if (arg === '--no-open' || arg === '-n') {
       options.open = false
-    } else if (arg === '--all') {
+    } else if (arg === '--all' || arg === '-a') {
       options.includeAllFiles = true
     } else if (arg === '--fade') {
       options.fadeMs = parseDuration(takeValue())
@@ -276,10 +276,10 @@ Options and the optional [dir] may appear in any order.
 
 Options:
   -p, --port <n>   Port to listen on (default 8137, use 0 for a random port)
-      --host <h>   Host to bind (default localhost)
-      --open       Open the browser (default)
-      --no-open    Do not open the browser
-      --all        List all files, not only markdown
+  -H, --host <h>   Host to bind (default localhost)
+  -o, --open       Open the browser (default)
+  -n, --no-open    Do not open the browser
+  -a, --all        List all files, not only markdown
       --fade <d>   How long "recently changed" stays tinted (default 5m;
                    e.g. 60s, 5m)
       --no-fade    Turn the "recently changed" tint off

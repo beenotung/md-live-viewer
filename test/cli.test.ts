@@ -30,6 +30,14 @@ test('parseArgs accepts --key=value for long options', () => {
   assert.equal(options.includeAllFiles, true)
 })
 
+test('parseArgs accepts short aliases for host, all, open and no-open', () => {
+  assert.equal(parseArgs(['-H', '0.0.0.0'], '/work').host, '0.0.0.0')
+  assert.equal(parseArgs(['-a'], '/work').includeAllFiles, true)
+  assert.equal(parseArgs(['-o'], '/work').open, true)
+  assert.equal(parseArgs(['-n'], '/work').open, false)
+  assert.equal(parseArgs(['-h'], '/work').flags.show_help, true)
+})
+
 test('parseArgs reports help, version and list via flags', () => {
   assert.equal(parseArgs(['--help'], '/work').flags.show_help, true)
   assert.equal(parseArgs(['-h'], '/work').flags.show_help, true)

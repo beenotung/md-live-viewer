@@ -93,7 +93,7 @@ Options and the optional `[dir]` may appear in any order.
 | `[dir]` | Folder to serve. Defaults to the current directory. |
 | `-p, --port <n>` | Port (default `8137`; use `0` for a random free port). |
 | `--host <h>` | Host to bind (default `localhost`). |
-| `--open` / `--no-open` | Open the browser automatically (default on). |
+| `-o, --open` / `-n, --no-open` | Open the browser automatically (default on). |
 | `--all` | List all files, not only markdown. |
 | `--fade <dur>` | How long the "recently changed" tint lasts (default `5m`; e.g. `60s`, `5m`; `0` or `--no-fade` disables). |
 | `-l, --list` | List the running viewers (port and served folder). |
