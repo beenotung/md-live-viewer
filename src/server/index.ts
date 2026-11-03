@@ -166,6 +166,10 @@ export type CliOptions = {
   includeAllFiles: boolean
   /** How long the "recently changed" tint lasts, in ms (0 disables it). */
   fadeMs: number
+  flags: {
+    show_version: boolean
+    show_help: boolean
+  }
 }
 
 /** Parse a duration like `300`, `90s`, `5m`, `1500ms`, or `off` (0) → ms. */
@@ -188,6 +192,10 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     open: true,
     includeAllFiles: false,
     fadeMs: 300000,
+    flags: {
+      show_version: false,
+      show_help: false,
+    },
   }
   let positional: string[] = []
   for (let index = 0; index < argv.length; index++) {
@@ -223,9 +231,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     } else if (arg === '--no-fade') {
       options.fadeMs = 0
     } else if (arg === '--version' || arg === '-v') {
-      options.port = -2
+      options.flags.show_version = true
     } else if (arg === '--help' || arg === '-h') {
-      options.port = -1
+      options.flags.show_help = true
     } else if (arg.startsWith('-')) {
       throw new Error(`Unknown option: ${arg}`)
     } else {
@@ -489,11 +497,11 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     process.exitCode = 1
     return
   }
-  if (options.port === -2) {
+  if (options.flags.show_version) {
     process.stdout.write(`md-live-viewer v${PACKAGE_VERSION}\n`)
     return
   }
-  if (options.port === -1) {
+  if (options.flags.show_help) {
     process.stdout.write(HELP)
     return
   }
