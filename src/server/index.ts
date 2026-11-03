@@ -177,6 +177,8 @@ export type CliOptions = {
   where: string | null
   /** True when the port was passed explicitly (`-p` / `--port`). */
   portExplicit: boolean
+  /** Serve in the background, print the URL and exit. */
+  detach: boolean
   flags: {
     show_version: boolean
     show_help: boolean
@@ -206,6 +208,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     fadeMs: 300000,
     where: null,
     portExplicit: false,
+    detach: false,
     flags: {
       show_version: false,
       show_help: false,
@@ -242,6 +245,8 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
       options.open = false
     } else if (arg === '--all' || arg === '-a') {
       options.includeAllFiles = true
+    } else if (arg === '--detach' || arg === '-d') {
+      options.detach = true
     } else if (arg === '--fade') {
       options.fadeMs = parseDuration(takeValue())
     } else if (arg === '--no-fade') {
@@ -304,6 +309,7 @@ Options:
   -o, --open       Open the browser (default)
   -n, --no-open    Do not open the browser
   -a, --all        List all files, not only markdown
+  -d, --detach     Serve in the background; print the banner and exit
       --fade <d>   How long "recently changed" stays tinted (default 5m;
                    e.g. 60s, 5m)
       --no-fade    Turn the "recently changed" tint off
@@ -628,6 +634,15 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       return
     }
   }
+  if (options.detach) {
+    try {
+      await serveDetached(argv)
+    } catch (error) {
+      process.stderr.write(`Error: ${(error as Error).message}\n`)
+      process.exitCode = 1
+    }
+    return
+  }
 
   let fileCache: { at: number; files: string[] } = { at: 0, files: [] }
   function getFiles(force = false): string[] {
@@ -834,6 +849,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     `  watch mode: ${watcher.mode}`,
     `  fade: ${fadeLabel} (--fade <dur>)`,
   ]
+  lines = lines.filter(line => line !== '')
   console.log(lines.join('\n'))
   if (options.open) {
     openBrowser({ url: openUrl })
@@ -851,6 +867,69 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   process.once('SIGTERM', shutdown)
 
   logInstance({ status: 'running', port, root })
+}
+
+const DETACH_TIMEOUT_MS = 15000
+
+/**
+ * Start the same command in the background (without `--detach` / `-d`), then
+ * print its banner once it reports a URL on stdout. The child keeps running
+ * after we exit, so the banner is all we read from it.
+ */
+function serveDetached(argv: string[]): Promise<void> {
+  let args = argv.filter(arg => arg !== '--detach' && arg !== '-d')
+  let child = spawn(process.execPath, [process.argv[1], ...args], {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  return new Promise((resolve, reject) => {
+    let output = ''
+    let errors = ''
+    let done = false
+    let timer: NodeJS.Timeout
+    let finish = (error: Error | null) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      child.stdout.destroy()
+      child.stderr.destroy()
+      child.unref()
+      if (error) {
+        reject(error)
+      } else {
+        console.log(output.trim())
+        resolve()
+      }
+    }
+    let fail = (message: string) => {
+      // Surface the child's own message (and its hint line) when it printed one.
+      let match = errors.match(/^Error: .*$/m)
+      finish(
+        new Error(
+          match
+            ? errors.slice(match.index).trim().replace(/^Error: /, '')
+            : `${message}${errors ? `\n${errors.trim()}` : ''}`,
+        ),
+      )
+    }
+    timer = setTimeout(
+      () => fail(`viewer did not report a URL within ${DETACH_TIMEOUT_MS}ms`),
+      DETACH_TIMEOUT_MS,
+    )
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf-8')
+      let url =
+        output.match(/^ {2}open: (\S+)$/m) ??
+        output.match(/^ {2}url: +(\S+)$/m)
+      if (url) finish(null)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      errors += chunk.toString('utf-8')
+    })
+    child.on('error', error => finish(error))
+    child.on('exit', code => fail(`viewer exited with code ${code}`))
+  })
 }
 
 function openBrowser(options: { url: string }) {

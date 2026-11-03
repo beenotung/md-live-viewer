@@ -77,6 +77,13 @@ test('parseArgs reports help, version and list via flags', () => {
   assert.equal(parseArgs([], '/work').flags.show_help, false)
 })
 
+test('parseArgs reads --detach as a serve mode, not a flag', () => {
+  assert.equal(parseArgs(['--detach'], '/work').detach, true)
+  assert.equal(parseArgs(['-d'], '/work').detach, true)
+  assert.equal(parseArgs([], '/work').detach, false)
+  assert.equal(parseArgs(['--detach'], '/work').flags.show_help, false)
+})
+
 test('parseArgs resolves --where against cwd', () => {
   assert.equal(parseArgs(['--where', 'docs/a.md'], '/work').where, '/work/docs/a.md')
   assert.equal(

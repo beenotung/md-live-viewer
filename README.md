@@ -95,6 +95,7 @@ Options and the optional `[path]` may appear in any order.
 | `--host <h>` | Host to bind (default `localhost`). |
 | `-o, --open` / `-n, --no-open` | Open the browser automatically (default on). |
 | `--all` | List all files, not only markdown. |
+| `-d, --detach` | Serve in the background: print the banner and exit. |
 | `--fade <dur>` | How long the "recently changed" tint lasts (default `5m`; e.g. `60s`, `5m`; `0` or `--no-fade` disables). |
 | `-l, --list` | List the running viewers (port and served folder). |
 | `-w, --where <path>` | Show which running viewer serves `path` (exit code `1` if none). |
