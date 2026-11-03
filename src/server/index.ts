@@ -1,7 +1,8 @@
 import http from 'node:http'
-import fs from 'node:fs'
+import { homedir } from 'node:os'
+import fs, { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { execSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
   brotliCompressSync,
@@ -15,7 +16,7 @@ import {
   searchFiles,
 } from './files.ts'
 import { FileWatcher } from './watch.ts'
-import { logInstance, scanInstances } from './instance.ts'
+import { findInstance, logInstance, scanInstances } from './instance.ts'
 
 /**
  * Nearest ancestor that holds a package.json: the folder with `public/` and the
@@ -167,6 +168,8 @@ export type CliOptions = {
   includeAllFiles: boolean
   /** How long the "recently changed" tint lasts, in ms (0 disables it). */
   fadeMs: number
+  /** Absolute path whose serving instance `--where` should report. */
+  where: string | null
   flags: {
     show_version: boolean
     show_help: boolean
@@ -194,6 +197,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     open: true,
     includeAllFiles: false,
     fadeMs: 300000,
+    where: null,
     flags: {
       show_version: false,
       show_help: false,
@@ -239,6 +243,11 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
       options.flags.show_help = true
     } else if (arg === '--list' || arg === '-l') {
       options.flags.list_instances = true
+    } else if (arg === '--where' || arg === '-w') {
+      let value = takeValue()
+      if (!value)
+        throw new Error('--where needs a path (use --list to list all)')
+      options.where = path.resolve(cwd, normalizePath(value))
     } else if (arg.startsWith('-')) {
       throw new Error(`Unknown option: ${arg}`)
     } else {
@@ -246,10 +255,16 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     }
   }
   if (positional.length > 0) {
-    options.root = path.resolve(cwd, positional[0])
+    options.root = path.resolve(cwd, normalizePath(positional[0]))
   }
-  options.root = path.resolve(options.root)
   return options
+}
+
+function normalizePath(path: string): string {
+  if (path.startsWith('~')) {
+    path = path.replace('~', homedir())
+  }
+  return path
 }
 
 const HELP = `md-live-viewer v${PACKAGE_VERSION} - live-updating markdown viewer
@@ -269,6 +284,8 @@ Options:
                    e.g. 60s, 5m)
       --no-fade    Turn the "recently changed" tint off
   -l, --list       List running viewers (port and root folder)
+  -w, --where <path>
+                   Show the running viewer that serves <path>
   -v, --version    Show the version
   -h, --help       Show this help
 
@@ -509,6 +526,34 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   }
   if (options.flags.show_help) {
     process.stdout.write(HELP)
+    return
+  }
+  if (options.where) {
+    let instances = await scanInstances()
+    let match = findInstance(instances, options.where)
+    if (!match) {
+      process.stderr.write(`no running viewer covers ${options.where}\n`)
+      process.exitCode = 1
+      return
+    }
+    let relative = path.relative(match.root, options.where)
+    let lines = [
+      'md-live-viewer instance matched.',
+      `port: ${match.port}`,
+      `root: ${match.root}`,
+      `relative: ${relative}`,
+    ]
+    {
+      let url = new URL(`http://localhost:${match.port}`)
+      url.hash = 'file=' + relative.split(path.sep).join('/')
+      lines.push(`url: ${url}`)
+    }
+    if (!existsSync(options.where)) {
+      lines.push(`warning: target file does not exist.`)
+    } else if (statSync(options.where).isDirectory()) {
+      lines.push(`warning: target is a directory.`)
+    }
+    console.log(lines.join('\n'))
     return
   }
   if (options.flags.list_instances) {

@@ -40,6 +40,16 @@ test('parseArgs reports help, version and list via flags', () => {
   assert.equal(parseArgs([], '/work').flags.show_help, false)
 })
 
+test('parseArgs resolves --where against cwd', () => {
+  assert.equal(parseArgs(['--where', 'docs/a.md'], '/work').where, '/work/docs/a.md')
+  assert.equal(
+    parseArgs(['--where=../notes/b.md'], '/work/project').where,
+    '/work/notes/b.md',
+  )
+  assert.equal(parseArgs([], '/work').where, null)
+  assert.throws(() => parseArgs(['--where'], '/work'))
+})
+
 test('parseArgs rejects an invalid port and unknown flags', () => {
   assert.throws(() => parseArgs(['--port', 'abc'], '/work'))
   assert.throws(() => parseArgs(['--nope'], '/work'))

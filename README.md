@@ -97,6 +97,7 @@ Options and the optional `[dir]` may appear in any order.
 | `--all` | List all files, not only markdown. |
 | `--fade <dur>` | How long the "recently changed" tint lasts (default `5m`; e.g. `60s`, `5m`; `0` or `--no-fade` disables). |
 | `-l, --list` | List the running viewers (port and served folder). |
+| `-w, --where <path>` | Show which running viewer serves `path` (exit code `1` if none). |
 | `-v, --version` | Show the version. |
 | `-h, --help` | Show help. |
 

@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
 import { userInfo, tmpdir, homedir } from 'os'
-import { join } from 'path'
+import { join, resolve } from 'path'
+import { isInside } from './files.ts'
 
 function getDir() {
   let dir = process.env.XDG_RUNTIME_DIR
@@ -103,4 +104,15 @@ export function logInstance(instance: Instance) {
   mkdirSync(dir, { recursive: true })
   let line = JSON.stringify(instance) + '\n'
   appendFileSync(file, line)
+}
+
+/** The running viewer that serves `target`, preferring the most specific root. */
+export function findInstance(instances: Instance[], target: string): Instance | null {
+  let absolute = resolve(target)
+  let best: Instance | null = null
+  for (let instance of instances) {
+    if (!isInside(instance.root, absolute)) continue
+    if (!best || instance.root.length > best.root.length) best = instance
+  }
+  return best
 }

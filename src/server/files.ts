@@ -262,7 +262,7 @@ function queryVariants(query: string): string[] {
 }
 
 /** True when `child` is `parent` or lives inside it. */
-function isInside(parent: string, child: string): boolean {
+export function isInside(parent: string, child: string): boolean {
   let relative = path.relative(parent, child)
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
