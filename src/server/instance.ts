@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
-import { userInfo, tmpdir } from 'os'
+import { userInfo, tmpdir, homedir } from 'os'
 import { join } from 'path'
 
 function getDir() {
@@ -11,9 +11,35 @@ function getDir() {
   // this is shared between users on linux, per-user on other platforms
   dir = tmpdir()
   if (process.platform === 'linux') {
-    dir = join(dir, userInfo().username)
+    let user = getUser()
+    if (user) {
+      dir = join(dir, user)
+    }
   }
   return dir
+}
+function getUser() {
+  let user = ''
+
+  try {
+    user = userInfo().username
+  } catch {
+    // expected in containerized environments
+  }
+
+  try {
+    user ||= process.geteuid?.().toString() || ''
+  } catch {
+    // expected in containerized environments
+  }
+
+  try {
+    user ||= homedir().split('/').pop() || ''
+  } catch {
+    // expected in containerized environments
+  }
+
+  return user
 }
 let dir = join(getDir(), 'md-live-viewer')
 let file = join(dir, 'registry')
