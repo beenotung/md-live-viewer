@@ -268,6 +268,7 @@ Options:
       --fade <d>   How long "recently changed" stays tinted (default 5m;
                    e.g. 60s, 5m)
       --no-fade    Turn the "recently changed" tint off
+  -l, --list       List running viewers (port and root folder)
   -v, --version    Show the version
   -h, --help       Show this help
 
