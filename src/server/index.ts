@@ -115,10 +115,47 @@ function fileExtension(filePath: string): string {
 
 /** Document/archive/binary types we never read as text — shown as a card. */
 const UNPREVIEWABLE_EXTENSIONS = new Set([
-  'pptx', 'ppt', 'ppsx', 'pps', 'docx', 'doc', 'xlsx', 'xls', 'odt', 'ods', 'odp',
-  'pages', 'numbers', 'key', 'zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz',
-  'exe', 'dll', 'so', 'dylib', 'bin', 'dmg', 'iso', 'apk', 'jar', 'class',
-  'woff', 'woff2', 'ttf', 'otf', 'eot', 'psd', 'ai', 'db', 'sqlite',
+  'pptx',
+  'ppt',
+  'ppsx',
+  'pps',
+  'docx',
+  'doc',
+  'xlsx',
+  'xls',
+  'odt',
+  'ods',
+  'odp',
+  'pages',
+  'numbers',
+  'key',
+  'zip',
+  'rar',
+  '7z',
+  'tar',
+  'gz',
+  'tgz',
+  'bz2',
+  'xz',
+  'exe',
+  'dll',
+  'so',
+  'dylib',
+  'bin',
+  'dmg',
+  'iso',
+  'apk',
+  'jar',
+  'class',
+  'woff',
+  'woff2',
+  'ttf',
+  'otf',
+  'eot',
+  'psd',
+  'ai',
+  'db',
+  'sqlite',
 ])
 
 export type CliOptions = {
@@ -164,7 +201,8 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
         arg = arg.slice(0, eq)
       }
     }
-    let takeValue = () => (inlineValue !== undefined ? inlineValue : argv[++index])
+    let takeValue = () =>
+      inlineValue !== undefined ? inlineValue : argv[++index]
 
     if (arg === '--port' || arg === '-p') {
       let value = takeValue()
@@ -227,7 +265,11 @@ Examples:
 Installed commands (equivalent): md-view, md-viewer, md-live-viewer.
 `
 
-function sendJson(response: http.ServerResponse, status: number, body: unknown) {
+function sendJson(
+  response: http.ServerResponse,
+  status: number,
+  body: unknown,
+) {
   let payload = JSON.stringify(body)
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -340,7 +382,8 @@ function getCompressedBody(
   compressedCache.set(cacheKey, { version, body })
   compressedCacheBytes += body.length
   for (let [key, entry] of compressedCache) {
-    if (compressedCacheBytes <= MAX_COMPRESS_CACHE_BYTES || key === cacheKey) break
+    if (compressedCacheBytes <= MAX_COMPRESS_CACHE_BYTES || key === cacheKey)
+      break
     compressedCache.delete(key)
     compressedCacheBytes -= entry.body.length
   }
@@ -352,7 +395,10 @@ function fileVersion(stats: fs.Stats): string {
   return `${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}`
 }
 
-function matchesETag(header: string | string[] | undefined, etag: string): boolean {
+function matchesETag(
+  header: string | string[] | undefined,
+  etag: string,
+): boolean {
   if (!header) return false
   let value = Array.isArray(header) ? header.join(',') : header
   return value
@@ -368,7 +414,8 @@ function sendFile(
   stats: fs.Stats,
 ) {
   let contentType =
-    CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+    CONTENT_TYPES[path.extname(filePath).toLowerCase()] ??
+    'application/octet-stream'
   let version = fileVersion(stats)
   let compressible =
     stats.size >= MIN_COMPRESS_BYTES &&
@@ -385,7 +432,7 @@ function sendFile(
   let headers: http.OutgoingHttpHeaders = {
     'Content-Type': contentType,
     'Cache-Control': 'no-cache',
-    ETag: etag,
+    'ETag': etag,
   }
   if (compressible) headers['Vary'] = 'Accept-Encoding'
 
@@ -436,7 +483,9 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   try {
     options = parseArgs(argv)
   } catch (error) {
-    process.stderr.write(`${(error as Error).message}\nRun with --help for usage.\n`)
+    process.stderr.write(
+      `${(error as Error).message}\nRun with --help for usage.\n`,
+    )
     process.exitCode = 1
     return
   }
@@ -479,7 +528,11 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   function subscribeWatcher() {
     unsubscribeWatcher()
     unsubscribeWatcher = watcher.subscribe(event => {
-      if (event.path && !options.includeAllFiles && !isMarkdownFile(event.path)) {
+      if (
+        event.path &&
+        !options.includeAllFiles &&
+        !isMarkdownFile(event.path)
+      ) {
         return
       }
       broadcast(event)
@@ -536,7 +589,10 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
           return
         }
         if (stats.size > MAX_TEXT_FILE_BYTES) {
-          sendJson(response, 413, { error: 'Too large to show as text', size: stats.size })
+          sendJson(response, 413, {
+            error: 'Too large to show as text',
+            size: stats.size,
+          })
           return
         }
         let buffer = fs.readFileSync(absolute)
@@ -573,11 +629,13 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       response.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
-        Connection: 'keep-alive',
+        'Connection': 'keep-alive',
         'X-Accel-Buffering': 'no',
       })
       response.write(`retry: 3000\n\n`)
-      response.write(`event: ready\ndata: ${JSON.stringify({ mode: watcher.mode })}\n\n`)
+      response.write(
+        `event: ready\ndata: ${JSON.stringify({ mode: watcher.mode })}\n\n`,
+      )
 
       clients.add(response)
       let keepAlive = setInterval(() => response.write(': ping\n\n'), 25000)
@@ -601,7 +659,8 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   })
 
   let address = server.address()
-  let port = typeof address === 'object' && address ? address.port : options.port
+  let port =
+    typeof address === 'object' && address ? address.port : options.port
   let displayHost = options.host === '0.0.0.0' ? 'localhost' : options.host
   let url = `http://${displayHost}:${port}/`
 
@@ -611,7 +670,9 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
       : options.fadeMs % 60000 === 0
         ? `${options.fadeMs / 60000}m`
         : `${Math.round(options.fadeMs / 1000)}s`
-  console.log(`\n  md-live-viewer${PACKAGE_VERSION ? ` v${PACKAGE_VERSION}` : ''}`)
+  console.log(
+    `\n  md-live-viewer${PACKAGE_VERSION ? ` v${PACKAGE_VERSION}` : ''}`,
+  )
   console.log(`  root: ${root}`)
   console.log(`  url:  ${url}`)
   console.log(`  watch mode: ${watcher.mode}`)
@@ -632,7 +693,8 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   process.once('SIGTERM', shutdown)
 }
 
-function openBrowser(options: { url: string; host: string; port: number }) {  let command: string
+function openBrowser(options: { url: string; host: string; port: number }) {
+  let command: string
   let args: string[]
   if (process.platform === 'darwin') {
     command = 'open'
