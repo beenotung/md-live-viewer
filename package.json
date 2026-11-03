@@ -52,8 +52,8 @@
     "mermaid": "^11.16.0",
     "micromark": "^4.0.2",
     "micromark-extension-gfm": "^3.0.0",
-    "typescript": "^6.0.3",
-    "prismjs": "^1.30.0"
+    "prismjs": "^1.30.0",
+    "typescript": "^6.0.3"
   },
   "dependencies": {},
   "repository": {
