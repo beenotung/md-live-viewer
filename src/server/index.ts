@@ -15,6 +15,7 @@ import {
   searchFiles,
 } from './files.ts'
 import { FileWatcher } from './watch.ts'
+import { logInstance, scanInstances } from './instance.ts'
 
 /**
  * Nearest ancestor that holds a package.json: the folder with `public/` and the
@@ -169,6 +170,7 @@ export type CliOptions = {
   flags: {
     show_version: boolean
     show_help: boolean
+    list_instances: boolean
   }
 }
 
@@ -195,6 +197,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
     flags: {
       show_version: false,
       show_help: false,
+      list_instances: false,
     },
   }
   let positional: string[] = []
@@ -234,6 +237,8 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CliOptions {
       options.flags.show_version = true
     } else if (arg === '--help' || arg === '-h') {
       options.flags.show_help = true
+    } else if (arg === '--list' || arg === '-l') {
+      options.flags.list_instances = true
     } else if (arg.startsWith('-')) {
       throw new Error(`Unknown option: ${arg}`)
     } else {
@@ -505,6 +510,14 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     process.stdout.write(HELP)
     return
   }
+  if (options.flags.list_instances) {
+    let instances = await scanInstances()
+    console.log(`total ${instances.length} instances:`)
+    for (let instance of instances) {
+      console.log(`port: ${instance.port} | root: ${instance.root}`)
+    }
+    return
+  }
   let root = options.root
   let rootStats = fs.statSync(root)
   if (!rootStats.isDirectory()) {
@@ -551,7 +564,11 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     let url = new URL(request.url ?? '/', `http://${request.headers.host}`)
 
     if (url.pathname === '/api/config') {
-      sendJson(response, 200, { fadeMs: options.fadeMs })
+      sendJson(response, 200, {
+        root,
+        includeAllFiles: options.includeAllFiles,
+        fadeMs: options.fadeMs,
+      })
       return
     }
 
@@ -691,6 +708,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   }
 
   let shutdown = () => {
+    logInstance({ status: 'stopped', port, root })
     unsubscribeWatcher()
     watcher.close()
     for (let client of clients) client.end()
@@ -699,6 +717,8 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
   }
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
+
+  logInstance({ status: 'running', port, root })
 }
 
 function openBrowser(options: { url: string; host: string; port: number }) {

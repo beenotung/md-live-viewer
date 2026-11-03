@@ -1,0 +1,80 @@
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
+import { userInfo, tmpdir } from 'os'
+import { join } from 'path'
+
+function getDir() {
+  let dir = process.env.XDG_RUNTIME_DIR
+  if (dir) {
+    // this is per user already
+    return join(dir)
+  }
+  // this is shared between users on linux, per-user on other platforms
+  dir = tmpdir()
+  if (process.platform === 'linux') {
+    dir = join(dir, userInfo().username)
+  }
+  return dir
+}
+let dir = join(getDir(), 'md-live-viewer')
+let file = join(dir, 'registry')
+
+export type Instance = {
+  status: 'running' | 'stopped'
+  port: number
+  root: string
+}
+
+export async function scanInstances(): Promise<Instance[]> {
+  let text = existsSync(file) ? readFileSync(file, 'utf-8') : ''
+  let lines = text.split('\n')
+  let instances: Instance[] = []
+  for (let line of lines) {
+    // skip empty lines
+    line = line.trim()
+    if (!line) continue
+
+    let instance = JSON.parse(line) as Instance
+
+    // skip invalid lines
+    if (!instance.status || !instance.port || !instance.root) continue
+
+    let index = instances.findIndex(i => i.port === instance.port)
+
+    // check for stopped instance (from file)
+    if (instance.status === 'stopped') {
+      if (index !== -1) {
+        instances.splice(index, 1)
+      }
+      continue
+    }
+
+    if (index === -1) {
+      instances.push(instance)
+    } else {
+      instances[index] = instance
+    }
+  }
+
+  // check for stopped instances (from process)
+  for (let i = 0; i < instances.length; i++) {
+    try {
+      let instance = instances[i]
+      let url = `http://localhost:${instance.port}/api/config`
+      let res = await fetch(url)
+      let json = await res.json()
+      if (!json.root) throw new Error(`Invalid response from ${url}`)
+      instance.root = json.root
+    } catch (error) {
+      instances.splice(i, 1)
+      i--
+    }
+  }
+
+  return instances
+}
+
+export function logInstance(instance: Instance) {
+  mkdirSync(dir, { recursive: true })
+  let line = JSON.stringify(instance) + '\n'
+  appendFileSync(file, line)
+}
