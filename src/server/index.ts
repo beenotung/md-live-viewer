@@ -848,6 +848,7 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     openUrl !== url ? `  open: ${openUrl}` : '',
     `  watch mode: ${watcher.mode}`,
     `  fade: ${fadeLabel} (--fade <dur>)`,
+    `server ready.`,
   ]
   lines = lines.filter(line => line !== '')
   console.log(lines.join('\n'))
@@ -907,7 +908,10 @@ function serveDetached(argv: string[]): Promise<void> {
       finish(
         new Error(
           match
-            ? errors.slice(match.index).trim().replace(/^Error: /, '')
+            ? errors
+                .slice(match.index)
+                .trim()
+                .replace(/^Error: /, '')
             : `${message}${errors ? `\n${errors.trim()}` : ''}`,
         ),
       )
@@ -919,16 +923,21 @@ function serveDetached(argv: string[]): Promise<void> {
 
     child.stdout.on('data', (chunk: Buffer) => {
       output += chunk.toString('utf-8')
-      let url =
-        output.match(/^ {2}open: (\S+)$/m) ??
-        output.match(/^ {2}url: +(\S+)$/m)
-      if (url) finish(null)
+      // The banner ends with `server ready.`: by then every line has arrived.
+      if (/^server ready\.$/m.test(output)) finish(null)
     })
     child.stderr.on('data', (chunk: Buffer) => {
       errors += chunk.toString('utf-8')
     })
     child.on('error', error => finish(error))
-    child.on('exit', code => fail(`viewer exited with code ${code}`))
+    child.on('exit', code => {
+      if (code !== 0) fail(`viewer exited with code ${code}`)
+    })
+    // A detached child can also exit cleanly after printing a banner, e.g. when
+    // a viewer started in between now covers the file: show that banner.
+    child.on('close', () => {
+      if (output.trim()) finish(null)
+    })
   })
 }
 
