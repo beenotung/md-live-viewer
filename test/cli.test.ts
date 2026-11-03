@@ -30,10 +30,14 @@ test('parseArgs accepts --key=value for long options', () => {
   assert.equal(options.includeAllFiles, true)
 })
 
-test('parseArgs reports help via a negative port', () => {
-  assert.equal(parseArgs(['--help'], '/work').port, -1)
-  assert.equal(parseArgs(['--version'], '/work').port, -2)
-  assert.equal(parseArgs(['-v'], '/work').port, -2)
+test('parseArgs reports help, version and list via flags', () => {
+  assert.equal(parseArgs(['--help'], '/work').flags.show_help, true)
+  assert.equal(parseArgs(['-h'], '/work').flags.show_help, true)
+  assert.equal(parseArgs(['--version'], '/work').flags.show_version, true)
+  assert.equal(parseArgs(['-v'], '/work').flags.show_version, true)
+  assert.equal(parseArgs(['--list'], '/work').flags.list_instances, true)
+  assert.equal(parseArgs(['-l'], '/work').flags.list_instances, true)
+  assert.equal(parseArgs([], '/work').flags.show_help, false)
 })
 
 test('parseArgs rejects an invalid port and unknown flags', () => {
