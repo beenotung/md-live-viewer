@@ -552,6 +552,10 @@ type HashState = { file: string | null }
  */
 function readStateFromHash(): HashState {
   let hash = location.hash.replace(/^#/, '')
+  // A query string may be appended for cache-busting (`#file=a.md?t=123`); it is
+  // not part of the path. A literal '?' in a filename has to be percent-encoded.
+  let queryStart = hash.indexOf('?')
+  if (queryStart !== -1) hash = hash.slice(0, queryStart)
   if (!hash) return { file: null }
   if (!hash.includes('=')) {
     // Legacy: bare path.
