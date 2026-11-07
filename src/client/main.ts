@@ -1521,10 +1521,20 @@ function connectEvents() {
     }
   }
 
-  open()
-  // Recover promptly when the tab is refocused or the network returns.
+  // A tab opened in the background (session restore, ctrl-click) should not take
+  // a socket it will never use: over HTTP/1.1 the browser allows 6 per origin, and
+  // a handful of hidden tabs is enough to starve the one being looked at.
+  if (!document.hidden) open()
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) ensureConnected()
+    if (document.hidden) {
+      clearTimeout(reconnectTimer)
+      source?.close()
+      source = null
+      return
+    }
+    ensureConnected()
+    // Catch up on whatever changed while this tab was hidden.
+    if (currentFilePath) loadFile(currentFilePath, { silent: true })
   })
   window.addEventListener('online', ensureConnected)
   window.addEventListener('focus', ensureConnected)
