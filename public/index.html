@@ -561,6 +561,23 @@
       #toast.show {
         opacity: 1;
       }
+      #copyPlainBtn {
+        position: fixed;
+        z-index: 1900;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+        background: var(--panel);
+        color: var(--fg);
+        font-size: 0.78rem;
+        line-height: 1.4;
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+      }
+      #copyPlainBtn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
       #dropOverlay {
         position: fixed;
         inset: 0;
@@ -830,6 +847,7 @@
       </div>
     </main>
     <div id="toast"></div>
+    <button id="copyPlainBtn" type="button" hidden title="Copy as plain text" aria-label="Copy as plain text">Copy plain text</button>
     <div id="lightbox" hidden>
       <button id="lightboxClose" type="button" title="Close (Esc)" aria-label="Close">✕</button>
       <img id="lightboxImg" alt="" />

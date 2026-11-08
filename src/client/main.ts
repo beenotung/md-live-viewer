@@ -456,6 +456,253 @@ function addInlineCodeCopy(container: HTMLElement) {
 }
 
 /**
+ * Convert a DOM range into plain text with one line per block, so pasting it
+ * into a chat app keeps the paragraph and list structure. Copying the rendered
+ * HTML directly loses those newlines, because the browser treats them as
+ * layout whitespace rather than characters.
+ */
+function nodeToPlainText(
+  node: Node,
+  opts: { inPre?: boolean; prefix?: string; pre?: string[] } = {},
+): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    let text = node.textContent ?? ''
+    if (opts.inPre) return text
+    if (text === '') return ''
+    // A newline means indentation between block elements; a bare space
+    // separates inline elements and must survive, or "a <b>b</b>" loses it.
+    if (!text.trim()) return /[\r\n]/.test(text) ? '' : ' '
+    return text.replace(/\s+/g, ' ')
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return ''
+  let el = node as HTMLElement
+  let tag = el.tagName.toLowerCase()
+
+  if (tag === 'br') return '\n'
+  // Keep the rule as a textual separator; leading/trailing ones are stripped
+  // later, so a section ending at a rule does not gain a dangling "---".
+  if (tag === 'hr') return '\n---\n'
+  // Fenced blocks keep their own line breaks and indentation. Stash them so the
+  // whitespace cleanup cannot touch them, then restore after the cleanup.
+  if (tag === 'pre') {
+    let code = el.textContent ?? ''
+    if (!opts.pre) return '\n' + code + '\n'
+    let index = opts.pre.push(code) - 1
+    return `\n\u0000${index}\u0000\n`
+  }
+
+  if (tag === 'ul' || tag === 'ol') {
+    let out = '\n'
+    let index = 0
+    for (let child of Array.from(el.children)) {
+      if (child.tagName.toLowerCase() !== 'li') continue
+      index++
+      let marker = tag === 'ol' ? `${index}. ` : '・'
+      // The container owns the numbering: it passes an empty prefix so the
+      // <li> branch renders the item body only.
+      let body = nodeToPlainText(child, { prefix: '', pre: opts.pre })
+      out += marker + body.trim() + '\n'
+    }
+    return out
+  }
+
+  let inner = ''
+  for (let child of Array.from(el.childNodes)) {
+    inner += nodeToPlainText(child, opts)
+  }
+
+  if (tag === 'tr') {
+    let cells = Array.from(el.children)
+      .filter(child => /^(td|th)$/.test(child.tagName.toLowerCase()))
+      .map(child => nodeToPlainText(child, opts).trim())
+    return '\n' + cells.join(' | ') + '\n'
+  }
+  if (tag === 'td' || tag === 'th') return inner.trim()
+  if (tag === 'li') return (opts.prefix ?? '・') + inner.trim() + '\n'
+
+  let isBlock =
+    /^(p|div|section|article|header|footer|blockquote|h[1-6]|table|thead|tbody|figure|figcaption)$/.test(
+      tag,
+    )
+  return isBlock ? '\n' + inner + '\n' : inner
+}
+
+function rangeToPlainText(range: Range): string {
+  let fragment = range.cloneContents()
+  // `cloneContents` returns only the selected children, so a selection made
+  // *inside* a <pre> arrives without its <pre> wrapper. Check the live DOM to
+  // keep code-block whitespace intact.
+  let startElement =
+    range.startContainer instanceof Element
+      ? range.startContainer
+      : range.startContainer.parentElement
+  let inPre = !!startElement?.closest('pre')
+
+  // Same problem for lists: a selection starting inside an <li> yields bare
+  // <li> nodes, so the <ol> cannot number them. Derive the ordinal from the
+  // live list instead, starting at the first item the range touches.
+  let orderedList = startElement?.closest('ol')
+  let ordinal = 1
+  if (orderedList) {
+    let items = Array.from(orderedList.children).filter(
+      child => child.tagName.toLowerCase() === 'li',
+    )
+    let firstTouched = items.findIndex(item => range.intersectsNode(item))
+    ordinal = firstTouched >= 0 ? firstTouched + 1 : 1
+  }
+
+  let pre: string[] = []
+  let out = ''
+  for (let node of Array.from(fragment.childNodes)) {
+    let options: { inPre?: boolean; prefix?: string; pre?: string[] } = { inPre, pre }
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      let tag = (node as HTMLElement).tagName.toLowerCase()
+      if (tag === 'li') {
+        options.prefix = orderedList ? `${ordinal++}. ` : '・'
+      }
+    }
+    out += nodeToPlainText(node, options)
+  }
+  let text = out
+    .replace(/[ \t]+\n/g, '\n')
+    // A space after a soft break is inline content, not indentation.
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  // A rule at either edge is an artefact of where the selection stopped, not
+  // a separator the user asked for.
+  text = text.replace(/^---\n+/, '').replace(/\n+---$/, '').trim()
+  return text.replace(/\u0000(\d+)\u0000/g, (_, index) => pre[Number(index)] ?? '')
+}
+
+/**
+ * Floating "copy plain text" button for the current selection. It follows the
+ * caret (either drag direction), keeps the selection alive on click, copies a
+ * block-aware plain-text rendering instead of the browser's HTML copy, and
+ * steps aside once the selected text scrolls out of view.
+ */
+function setupSelectionCopy() {
+  let button = document.querySelector<HTMLButtonElement>('#copyPlainBtn')!
+  let hide = () => {
+    button.hidden = true
+  }
+
+  // Track whether a drag is in progress: mid-drag the button must stay usable,
+  // after release it should follow the text instead.
+  let pointerDown = false
+  document.addEventListener('mousedown', () => {
+    pointerDown = true
+  })
+  document.addEventListener('mouseup', () => {
+    if (!pointerDown) return
+    pointerDown = false
+    update()
+  })
+  window.addEventListener('blur', () => {
+    pointerDown = false
+  })
+
+  // Keep the text selection when the button is pressed.
+  button.addEventListener('mousedown', event => event.preventDefault())
+  button.addEventListener('click', async () => {
+    let selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
+    let text = rangeToPlainText(selection.getRangeAt(0))
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      showToast(`Copied ${text.length} chars as plain text`)
+      hide()
+      selection.removeAllRanges()
+    } catch {
+      showToast('Clipboard blocked')
+    }
+  })
+
+  let update = () => {
+    let selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      return hide()
+    }
+    let range = selection.getRangeAt(0)
+    if (!content.contains(range.commonAncestorContainer)) return hide()
+    if (String(selection).trim().length < 3) return hide()
+
+    // Where did the drag finish? A backwards selection has the same range but
+    // the focus sits at the start, so the button must sit at the top instead.
+    // (A collapsed range's rect is empty in Firefox, so compare offsets rather
+    // than measuring the caret.)
+    let focusAtStart =
+      selection.focusNode === range.startContainer &&
+      selection.focusOffset === range.startOffset
+    let rects = Array.from(range.getClientRects()).filter(r => r.height > 0)
+    let anchor: DOMRect | null = focusAtStart
+      ? (rects[0] ?? null)
+      : (rects[rects.length - 1] ?? null)
+    if (!anchor) anchor = range.getBoundingClientRect()
+    if (!anchor || (anchor.width === 0 && anchor.height === 0 && anchor.top === 0)) {
+      return hide()
+    }
+
+    button.hidden = false
+    let width = button.offsetWidth || 132
+    let height = button.offsetHeight || 28
+    // A long selection can run past the viewport, especially when the user
+    // scrolls mid-drag. Follow the caret while it is visible, otherwise pin to
+    // the viewport corner so the button never leaves.
+    let offscreen = anchor.bottom < 0 || anchor.top > window.innerHeight
+    if (offscreen) {
+      // While the pointer is still down the user is mid-drag (often scrolling
+      // to extend the selection), so keep the button reachable. After release
+      // a scroll means they are just reading — follow the text and hide.
+      if (!pointerDown) return hide()
+      button.style.left = `${window.innerWidth - width - 24}px`
+      button.style.top = `${window.innerHeight - height - 24}px`
+      return
+    }
+    let top: number
+    let preferredLeft: number
+    if (focusAtStart) {
+      // Backwards drag: the selection runs downward from the cursor, so putting
+      // the button below would sit on the first numbered line. Sit above it
+      // instead, right edge on the cursor.
+      let above = anchor.top - height - 8
+      top = above >= 8 ? above : anchor.bottom + 8
+      preferredLeft = anchor.left - width
+    } else {
+      // Forward drag: below the last line, left edge on the cursor.
+      let below = anchor.bottom + height + 12 < window.innerHeight
+      top = below ? anchor.bottom + 8 : Math.max(8, anchor.top - height - 8)
+      preferredLeft = anchor.right
+    }
+    let left = Math.min(
+      window.innerWidth - width - 8,
+      Math.max(8, preferredLeft),
+    )
+    button.style.top = `${top}px`
+    button.style.left = `${left}px`
+  }
+
+  // Reposition on scroll (any container) and on resize; the handler decides
+  // whether to follow the text or step aside.
+  let scheduled = false
+  let reposition = () => {
+    if (scheduled) return
+    scheduled = true
+    requestAnimationFrame(() => {
+      scheduled = false
+      update()
+    })
+  }
+  // The note scrolls inside <main>, not the window: `scroll` does not bubble,
+  // so listen in the capture phase to catch scrolling on any container.
+  document.addEventListener('scroll', reposition, { passive: true, capture: true })
+  window.addEventListener('resize', reposition)
+
+  document.addEventListener('selectionchange', update)
+}
+
+/**
  * Rewrite relative image/link URLs so they load through the file server
  * instead of resolving against the viewer's own URL. Links to other markdown
  * files navigate inside the viewer; other files open as raw.
@@ -1862,6 +2109,7 @@ async function boot() {
   window.addEventListener('hashchange', followUrl)
 
   setupDropToOpen()
+  setupSelectionCopy()
   connectEvents()
 }
 
