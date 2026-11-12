@@ -106,12 +106,18 @@ export function logInstance(instance: Instance) {
   appendFileSync(file, line)
 }
 
-/** The running viewer that serves `target`, preferring the most specific root. */
-export function findInstance(instances: Instance[], target: string): Instance | null {
+/** The running viewer that serves `target`, preferring the most specific root.
+ *  Optionally narrows the match to a specific `port`. */
+export function findInstance(
+  instances: Instance[],
+  target: string,
+  port?: number,
+): Instance | null {
   let absolute = resolve(target)
   let best: Instance | null = null
   for (let instance of instances) {
     if (!isInside(instance.root, absolute)) continue
+    if (port && instance.port !== port) continue
     if (!best || instance.root.length > best.root.length) best = instance
   }
   return best

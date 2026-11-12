@@ -614,25 +614,30 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     return
   }
   let { root, file: openFile } = target
-  if (openFile) {
-    // A file: reuse a viewer whose root covers it, else serve its folder below.
-    let instance = findInstance(await scanInstances(), openFile)
-    if (instance) {
-      let relative = path.relative(instance.root, openFile)
-      let url = deepLink(instance, openFile)
-      let lines = [
-        'md-live-viewer instance reused.',
-        `  port: ${instance.port}`,
-        `  root: ${instance.root}`,
-        `  relative: ${relative}`,
-        `  url: ${url}`,
-      ]
-      console.log(lines.join('\n'))
-      if (options.open) {
-        openBrowser({ url })
-      }
-      return
+  // Reuse a covering viewer; if a port was pinned, it must match.
+  let instances = await scanInstances()
+  let instance = findInstance(
+    instances,
+    openFile || root,
+    options.portExplicit ? options.port : undefined,
+  )
+  if (instance) {
+    let relative = path.relative(instance.root, openFile || root)
+    let url = openFile
+      ? deepLink(instance, openFile)
+      : `http://localhost:${instance.port}/`
+    let lines = [
+      'md-live-viewer instance reused.',
+      `  port: ${instance.port}`,
+      `  root: ${instance.root}`,
+      relative ? `  relative: ${relative}` : '',
+      `  url: ${url}`,
+    ].filter(line => line !== '')
+    console.log(lines.join('\n'))
+    if (options.open) {
+      openBrowser({ url })
     }
+    return
   }
   if (options.detach) {
     try {
@@ -811,8 +816,8 @@ export async function start(argv = process.argv.slice(2)): Promise<void> {
     await listen(options.port)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
-    // fallback to any available port when auto-serving a file.
-    if (openFile && !options.portExplicit) {
+    // fallback to any available port when the port was not chosen.
+    if (!options.portExplicit) {
       await listen(0)
     } else {
       unsubscribeWatcher()
