@@ -1296,7 +1296,13 @@ function renderPaletteList() {
     let item = document.createElement('li')
     item.dataset.index = String(index)
     if (index === paletteActiveIndex) item.classList.add('active')
-    item.appendChild(highlightMatch(file, query))
+
+    // A real link, so Ctrl/Cmd-click and middle-click open a new tab natively.
+    let link = document.createElement('a')
+    link.className = 'palette-link'
+    link.href = `#file=${encodePathForHash(file)}`
+    link.appendChild(highlightMatch(file, query))
+    item.appendChild(link)
 
     // Recent rows get a remove button, placed *before* copy so the copy
     // button stays rightmost and aligns across Recent and All-files rows.
@@ -1336,7 +1342,7 @@ function renderPaletteList() {
     }
     item.appendChild(copyBtn)
 
-    wirePaletteRow(item, file, index)
+    wirePaletteRow(link, index)
     // Hovering moves the active selection too (like an editor quick-open).
     item.addEventListener('mouseenter', () => setActiveIndex(index))
     paletteList.appendChild(item)
@@ -1470,23 +1476,15 @@ function selectPaletteIndex(index: number) {
   loadFile(file)
 }
 
-/** Make a palette row behave like a link: a plain click opens it in the
- *  viewer, while Ctrl/Cmd-click and middle-click open it in a new tab. */
-function wirePaletteRow(item: HTMLElement, file: string, index: number) {
-  let url = `${location.origin}${location.pathname}#file=${encodePathForHash(file)}`
-  let openInNewTab = (event: MouseEvent) => {
-    event.preventDefault()
-    window.open(url, '_blank', 'noopener')
-  }
-  item.addEventListener('click', event => {
-    if (event.ctrlKey || event.metaKey) {
-      openInNewTab(event)
+/** A plain click opens the row in place; Ctrl/Cmd-click and middle-click are
+ *  left to the browser, which opens `href` in a new tab. */
+function wirePaletteRow(link: HTMLAnchorElement, index: number) {
+  link.addEventListener('click', event => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
       return
     }
+    event.preventDefault()
     selectPaletteIndex(index)
-  })
-  item.addEventListener('auxclick', event => {
-    if (event.button === 1) openInNewTab(event)
   })
 }
 
@@ -1601,10 +1599,14 @@ function renderTree() {
       let arrow = document.createElement('span')
       arrow.className = 'tree-arrow'
       arrow.textContent = `${indent}  `
-      item.appendChild(arrow)
-      item.appendChild(document.createTextNode(child.name))
+      // A real link, so Ctrl/Cmd-click and middle-click open a new tab natively.
+      let link = document.createElement('a')
+      link.className = 'palette-link'
+      link.href = `#file=${encodePathForHash(child.path)}`
+      link.append(arrow, document.createTextNode(child.name))
+      item.appendChild(link)
       item.dataset.index = String(index)
-      wirePaletteRow(item, child.path, index)
+      wirePaletteRow(link, index)
       item.addEventListener('mouseenter', () => setActiveIndex(index))
       paletteList.appendChild(item)
       paletteItems.push(item)
